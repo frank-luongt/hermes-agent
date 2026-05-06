@@ -1,0 +1,39 @@
+#
+# Frank's personal Hermes Agent profile.
+#
+# Usage:
+#   HERMES_UID=$(id -u) HERMES_GID=$(id -g) \
+#   docker compose -f docker-compose.frank.yml up -d --build
+#
+# Runtime data lives outside project repos by default:
+#   ~/.faos/hermes-frank
+#
+services:
+  hermes:
+    build: .
+    image: faos/hermes-agent:local
+    container_name: hermes-frank
+    restart: unless-stopped
+    command: ["gateway", "run"]
+    ports:
+      - "127.0.0.1:8642:8642"
+      - "127.0.0.1:9119:9119"
+    volumes:
+      - ${HERMES_DATA_DIR:-/Users/thanhlt/.faos/hermes-frank}:/opt/data
+      - /Users/thanhlt/Projects/FAOS/Foundation-AgenticOS:/mnt/faos/Foundation-AgenticOS:ro
+    environment:
+      - HERMES_UID=${HERMES_UID:-501}
+      - HERMES_GID=${HERMES_GID:-20}
+      - HERMES_TIMEZONE=Asia/Ho_Chi_Minh
+      - TZ=Asia/Ho_Chi_Minh
+      - HERMES_DASHBOARD=1
+      - HERMES_DASHBOARD_TUI=1
+      - HERMES_DASHBOARD_HOST=0.0.0.0
+      - HERMES_DASHBOARD_PORT=9119
+      - GATEWAY_HEALTH_URL=http://127.0.0.1:8642
+      - MESSAGING_CWD=/opt/data/workspace
+      - FAOS_CONTEXT_ROOT=/mnt/faos/Foundation-AgenticOS
+      - FAOS_DAILY_CONTEXT=/opt/data/workspace/faos-context/FAOS_DAILY_CONTEXT.md
+      - API_SERVER_ENABLED=true
+      - API_SERVER_HOST=0.0.0.0
+      - API_SERVER_PORT=8642

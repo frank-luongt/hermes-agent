@@ -54,6 +54,23 @@ if [ "$(id -u)" = "0" ]; then
         chmod 640 "$HERMES_HOME/config.yaml" 2>/dev/null || true
     fi
 
+    # The embedded dashboard chat runs the Ink TUI and can rebuild the TUI when
+    # sources are newer than dist. If HERMES_UID remaps the runtime user, image
+    # files owned by the build-time UID (10000) stop being writable, causing
+    # "Chat unavailable: 1" from the browser PTY.
+    if [ -d "$INSTALL_DIR/ui-tui" ]; then
+        tui_owner="$(stat -c %u "$INSTALL_DIR/ui-tui" 2>/dev/null || true)"
+        tui_dist_owner="$(stat -c %u "$INSTALL_DIR/ui-tui/dist" 2>/dev/null || true)"
+        ink_dist_owner="$(stat -c %u "$INSTALL_DIR/ui-tui/packages/hermes-ink/dist" 2>/dev/null || true)"
+        if [ "$tui_owner" != "$actual_hermes_uid" ] || \
+           [ "$tui_dist_owner" != "$actual_hermes_uid" ] || \
+           [ "$ink_dist_owner" != "$actual_hermes_uid" ]; then
+            echo "Fixing ownership of $INSTALL_DIR/ui-tui to hermes ($actual_hermes_uid)"
+            chown -R hermes:hermes "$INSTALL_DIR/ui-tui" 2>/dev/null || \
+                echo "Warning: chown failed for $INSTALL_DIR/ui-tui — embedded chat may not rebuild"
+        fi
+    fi
+
     echo "Dropping root privileges"
     exec gosu hermes "$0" "$@"
 fi
@@ -122,6 +139,7 @@ case "${HERMES_DASHBOARD:-}" in
         dash_host="${HERMES_DASHBOARD_HOST:-0.0.0.0}"
         dash_port="${HERMES_DASHBOARD_PORT:-9119}"
         dash_args=(--host "$dash_host" --port "$dash_port" --no-open)
+        export GATEWAY_HEALTH_URL="${GATEWAY_HEALTH_URL:-http://127.0.0.1:8642}"
         # Binding to anything other than localhost requires --insecure — the
         # dashboard refuses otherwise because it exposes API keys.  Inside a
         # container this is the expected deployment (host reaches it via
