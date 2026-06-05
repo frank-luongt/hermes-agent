@@ -10,8 +10,7 @@
 #
 services:
   hermes:
-    build: .
-    image: faos/hermes-agent:local
+    image: nousresearch/hermes-agent:latest
     container_name: hermes-frank
     restart: unless-stopped
     command: ["gateway", "run"]
@@ -30,6 +29,7 @@ services:
       - HERMES_DASHBOARD_TUI=1
       - HERMES_DASHBOARD_HOST=0.0.0.0
       - HERMES_DASHBOARD_PORT=9119
+      - HERMES_DASHBOARD_INSECURE=1
       - GATEWAY_HEALTH_URL=http://127.0.0.1:8642
       - MESSAGING_CWD=/opt/data/workspace
       - FAOS_CONTEXT_ROOT=/mnt/faos/Foundation-AgenticOS
