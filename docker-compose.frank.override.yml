@@ -1,0 +1,35 @@
+#
+# Pins Frank's Hermes gateway to a known-good image, adds gh, and gives the
+# agent the repo access it needs to actually work.
+#
+# v2026.7.20 is the image that was on disk for the last working gateway run
+# (2026-08-02). An unattended login-time bring-up should not silently adopt a
+# new upstream :latest, so the tag is explicit (in Dockerfile.frank) and moves
+# only by hand.
+#
+# Used together with the base file:
+#   docker compose -f docker-compose.frank.yml -f docker-compose.frank.override.yml up -d
+#
+services:
+  hermes:
+    # Built locally so gh + a git identity are baked in; FROM still pins upstream.
+    build:
+      context: .
+      dockerfile: Dockerfile.frank
+    image: faos/hermes-agent:v2026.8.3-gh
+
+    volumes:
+      # Reference reading only. Both canonical checkouts stay READ-ONLY on
+      # purpose: they are shared across concurrent sessions and hold
+      # uncommitted work, so an unattended agent must never be able to write
+      # (or `git add -A`) into them. Write work happens in the clones below.
+      - /Users/thanhlt/Projects/FAOS/Foundation-AgenticOS:/mnt/faos/Foundation-AgenticOS:ro
+      - /Users/thanhlt/Projects/FAOS/foundation-faos:/mnt/faos/foundation-faos:ro
+
+    environment:
+      # Isolated clones the agent owns outright — branch, commit, push, open PRs.
+      # They live under HERMES_HOME, which is already mounted read-write at
+      # /opt/data, so they need no mount of their own and no access to the
+      # shared .git of either canonical checkout.
+      - FAOS_FF_ROOT=/mnt/faos/foundation-faos
+      - FAOS_AGENT_REPOS=/opt/data/workspace/repos
