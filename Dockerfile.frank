@@ -36,5 +36,10 @@ RUN apt-get update \
  && apt-get purge -y --auto-remove patch \
  && rm -rf /var/lib/apt/lists/* \
  && rm /tmp/hermes-mcp-client-credentials.patch
+
+# Frank's bundled operator surface. It is served by the existing authenticated
+# dashboard at /mission-control; the host-only approval service remains outside
+# the image and is never proxied through the dashboard or Tailnet entry point.
+COPY plugins/mission-control /opt/hermes/plugins/mission-control
 # safe.directory '*' is required, not cosmetic: bind-mounted repos are owned by
 # the host uid, and git refuses "dubious ownership" trees without it.
