@@ -52,9 +52,9 @@ FAOSX_DEPARTMENTS = {
     "operations": "Operations",
     "strategy": "Strategy",
     "finance": "Finance",
-    "products": "Products",
+    "products": "Product",
     "engineering": "Engineering",
-    "projects": "Projects",
+    "projects": "Project",
     "sales_marketing": "Sales & Marketing",
     "customer_support": "Customer Support",
     "hr": "HR",
@@ -197,7 +197,7 @@ def _resolve_identity(session: dict[str, Any], identities: list[dict[str, Any]])
             "workRef": identity.get("workRef") or session.get("workRef"),
         }
     declared = session.get("declaredIdentity") if isinstance(session.get("declaredIdentity"), dict) else None
-    if declared and declared.get("source") in {"session-title-v1", "session-title-v2"}:
+    if declared and declared.get("source") in {"session-title-v1", "session-title-v2", "session-title-v3"}:
         agent_name = _identity_text(declared.get("agentName"), "Unassigned Agent", 80)
         department_id, department = _department(declared.get("departmentId") or declared.get("departmentCode"))
         digest = hashlib.sha256(f"{department_id}:{agent_name}".encode()).hexdigest()[:10]

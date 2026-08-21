@@ -28,7 +28,8 @@ workspace, profile, or runtime selectors to agent name, department, and role.
 See `../../identity-directory.example.json`.
 
 Named sessions may declare safe context using
-`faosx_department/Agent: Outcome | Scope | WORK-ID`.
+`Department/Agent Name: Job outcome | Scope | WORK-ID`, for example
+`Product/Khai Vuong: Review Even G2 applications | FAOS + FBrain | G2-014`.
 Only this strict template is parsed; arbitrary session titles are not exported.
 Declared identity is visibly weaker than an operator-configured mapping. See
 `../../session-title-convention.md` for team guidance.

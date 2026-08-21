@@ -232,7 +232,8 @@ def test_canonical_faosx_department_title_is_normalized(plugin):
 
 def test_all_faosx_departments_have_a_team_name(plugin):
     assert set(plugin.FAOSX_TEAM_NAMES) == set(plugin.FAOSX_DEPARTMENTS)
-    assert plugin._team_name("products") == "FAOSX Products"
+    assert plugin._team_name("products") == "FAOSX Product"
+    assert plugin._department("Product") == ("products", "Product")
     assert plugin._team_name("unknown") == "FAOSX Unassigned"
 
 
@@ -302,7 +303,9 @@ def test_frontend_contains_required_accessibility_and_security_copy():
     assert "It cannot target foreign sessions" in source
     assert "LOCAL TELEMETRY HUB" in source
     assert "Prompts, transcript bodies, command lines" in source
-    assert "Team title convention" in source
+    assert "Session title convention" in source
+    assert "sessionDisplayTitle(item)" in source
+    assert "Product/Khai Vuong" in source
     assert "agent.department" in source
     assert "agent.teamName" in source
     assert "window.confirm" not in source
