@@ -118,12 +118,12 @@
       style: { left: `${position.x}%`, top: `${position.y}%` },
       onClick: () => onSelect(agent.id),
       "aria-pressed": selected,
-      "aria-label": `${identityName}, ${agent.department || "Unassigned"}, ${agent.runtime}, ${STATE_LABEL[agent.state] || agent.state}`,
+      "aria-label": `${identityName}, ${agent.teamName || agent.department || "Unassigned"}, ${agent.runtime}, ${STATE_LABEL[agent.state] || agent.state}`,
     },
       h("span", { className: "mc-agent-core" }, initials, h("span", { className: "mc-runtime-badge", title: agent.runtime }, runtimeInitials)),
       h(StateDot, { state: agent.state }),
       h("span", { className: "mc-agent-name" }, identityName),
-      h("span", { className: "mc-agent-runtime" }, `${agent.department || "Unassigned"} · ${agent.runtimeLabel || agent.runtime}`),
+      h("span", { className: "mc-agent-runtime" }, `${agent.teamName || agent.department || "Unassigned"} · ${agent.runtimeLabel || agent.runtime}`),
     );
   }
 
@@ -273,7 +273,7 @@
     return h("aside", { className: "mc-inspector", "aria-label": `${agent.agentName || agent.label} inspector` },
       h("div", { className: "mc-inspector-head" },
         h("div", null,
-          h("div", { className: "mc-eyebrow" }, `${agent.department || "Unassigned"} · ${agent.role || agent.kind.replaceAll("-", " ")}`),
+          h("div", { className: "mc-eyebrow" }, `${agent.teamName || agent.department || "Unassigned"} · ${agent.role || agent.kind.replaceAll("-", " ")}`),
           h("h2", null, agent.agentName || agent.label),
         ),
         h("div", { className: classNames("mc-status-badge", `mc-status-${agent.state}`) },
@@ -282,6 +282,7 @@
       ),
       h("dl", { className: "mc-agent-facts" },
         h("div", null, h("dt", null, "Runtime"), h("dd", null, agent.runtime)),
+        h("div", null, h("dt", null, "Department"), h("dd", null, agent.department || "Unassigned")),
         h("div", null, h("dt", null, "Identity"), h("dd", null, `${agent.identityStatus || "unassigned"} · ${agent.identityConfidence || "unsupported"}`)),
         h("div", null, h("dt", null, "Model"), h("dd", null, agent.model || "Not reported")),
         h("div", null, h("dt", null, "Last signal"), h("dd", null, relativeTime(agent.lastSeenAt))),
@@ -374,7 +375,7 @@
                 h("span", { className: "mc-session-runtime" }, RUNTIME_INITIALS[item.runtime] || item.runtime.slice(0, 2).toUpperCase()),
                 h("span", { className: "mc-session-main" },
                   h("strong", null, item.agentName || "Unassigned Agent"),
-                  h("small", null, `${item.department || "Unassigned"} · ${item.role || "Local agent session"}`),
+                  h("small", null, `${item.teamName || item.department || "Unassigned"} · ${item.role || "Local agent session"}`),
                   h("span", { className: "mc-session-work" }, item.currentWork || "Work title not declared"),
                 ),
                 h("span", { className: "mc-session-state" }, h(StateDot, { state: item.state }), item.state.replaceAll("_", " ")),
@@ -382,6 +383,7 @@
               ),
               h("dl", { className: "mc-session-detail" },
                 h("div", null, h("dt", null, "Runtime"), h("dd", null, item.runtime)),
+                h("div", null, h("dt", null, "Department"), h("dd", null, item.department || "Unassigned")),
                 h("div", null, h("dt", null, "Identity"), h("dd", null, `${item.identityStatus} · ${item.identityConfidence}`)),
                 h("div", null, h("dt", null, "Telemetry"), h("dd", null, item.healthConfidence)),
                 h("div", null, h("dt", null, "Source"), h("dd", null, item.telemetrySource)),
@@ -394,7 +396,7 @@
           ))
         : h("div", { className: "mc-empty-feed" }, "No normalized local session metadata is available yet."),
       h("p", { className: "mc-session-boundary" }, "Read-only for foreign sessions. Prompts, transcript bodies, command lines, environment values, credentials, and absolute paths are excluded."),
-      h("p", { className: "mc-session-convention" }, "Team title convention: engineering/Atlas: Review auth boundaries | Customer Portal | KB-142. Mission Control scans the latest 10 days; mapped identity takes precedence over declared titles."),
+      h("p", { className: "mc-session-convention" }, "Team title convention: engineering/Minh Quân: Rà soát ranh giới xác thực | Customer Portal | KB-142. Mission Control scans the latest 10 days; mapped identity takes precedence over declared titles."),
     );
   }
 

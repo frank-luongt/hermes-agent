@@ -61,6 +61,21 @@ FAOSX_DEPARTMENTS = {
     "legal": "Legal",
     "investor_relations": "Investor Relations",
 }
+FAOSX_TEAM_NAMES = {
+    "company_hq": "FAOSX Ban Điều hành",
+    "wiki": "FAOSX Đội Tri thức",
+    "operations": "FAOSX Đội Vận hành",
+    "strategy": "FAOSX Đội Chiến lược",
+    "finance": "FAOSX Đội Tài chính",
+    "products": "FAOSX Đội Sản phẩm",
+    "engineering": "FAOSX Đội Kỹ thuật",
+    "projects": "FAOSX Đội Dự án",
+    "sales_marketing": "FAOSX Đội Kinh doanh & Tiếp thị",
+    "customer_support": "FAOSX Đội Hỗ trợ Khách hàng",
+    "hr": "FAOSX Đội Nhân sự",
+    "legal": "FAOSX Đội Pháp chế",
+    "investor_relations": "FAOSX Đội Quan hệ Nhà đầu tư",
+}
 LEGACY_DEPARTMENT_CODES = {
     "ENG": "engineering", "SRE": "engineering", "PROD": "products",
     "RES": "strategy", "OPS": "operations", "GTM": "sales_marketing",
@@ -123,6 +138,10 @@ def _department(value: Any) -> tuple[str, str]:
     return department_id, FAOSX_DEPARTMENTS[department_id]
 
 
+def _team_name(department_id: str) -> str:
+    return FAOSX_TEAM_NAMES.get(department_id, "Chưa phân đội FAOSX")
+
+
 def _load_identity_directory() -> list[dict[str, Any]]:
     """Load an operator-owned, local-only identity mapping.
 
@@ -152,6 +171,7 @@ def _load_identity_directory() -> list[dict[str, Any]]:
             "agentName": name,
             "departmentId": department_id,
             "department": department,
+            "teamName": _team_name(department_id),
             "role": _identity_text(item.get("role"), "Agent", 100),
             "job": _identity_text(item.get("job"), "", 120),
             "scope": _identity_text(item.get("scope"), "", 80),
@@ -181,7 +201,7 @@ def _resolve_identity(session: dict[str, Any], identities: list[dict[str, Any]])
         ranked.append((sum(weights[key] for key in selectors), identity))
     if ranked:
         identity = max(ranked, key=lambda row: row[0])[1]
-        return {key: identity[key] for key in ("agentId", "agentName", "departmentId", "department", "role")} | {
+        return {key: identity[key] for key in ("agentId", "agentName", "departmentId", "department", "teamName", "role")} | {
             "identityStatus": "mapped", "identityConfidence": "configured",
             "currentWork": identity.get("job") or session.get("currentWork") or "Work title not declared",
             "scope": identity.get("scope") or session.get("scope"),
@@ -194,18 +214,21 @@ def _resolve_identity(session: dict[str, Any], identities: list[dict[str, Any]])
         digest = hashlib.sha256(f"{department_id}:{agent_name}".encode()).hexdigest()[:10]
         return {
             "agentId": f"declared:{department_id}:{digest}", "agentName": agent_name,
-            "departmentId": department_id, "department": department, "role": "Declared session owner",
+            "departmentId": department_id, "department": department,
+            "teamName": _team_name(department_id), "role": "Declared session owner",
             "identityStatus": "declared", "identityConfidence": "declared",
         }
     if session.get("runtime") == "hermes":
         return {
             "agentId": "hermes:default", "agentName": "Hermes",
             "departmentId": "operations", "department": "Operations",
+            "teamName": _team_name("operations"),
             "role": "Orchestrator", "identityStatus": "system", "identityConfidence": "direct",
         }
     return {
         "agentId": None, "agentName": "Unassigned Agent",
         "departmentId": "unassigned", "department": "Unassigned",
+        "teamName": _team_name("unassigned"),
         "role": "Local agent session", "identityStatus": "unassigned", "identityConfidence": "unsupported",
     }
 
@@ -418,7 +441,7 @@ def _profile_identity(name: str, identities: list[dict[str, Any]]) -> dict[str, 
         return resolved
     return {
         "agentId": f"hermes:{name}", "agentName": name,
-        "departmentId": "operations", "department": "Operations",
+        "departmentId": "operations", "department": "Operations", "teamName": _team_name("operations"),
         "role": "Hermes Profile", "identityStatus": "profile", "identityConfidence": "direct",
     }
 
@@ -452,7 +475,8 @@ def _profile_nodes(tasks: list[Any], identities: Optional[list[dict[str, Any]]] 
         nodes.append({
             "id": f"hermes:{name}",
             "label": identity["agentName"], "agentName": identity["agentName"],
-            "departmentId": identity["departmentId"], "department": identity["department"], "role": identity["role"],
+            "departmentId": identity["departmentId"], "department": identity["department"],
+            "teamName": identity["teamName"], "role": identity["role"],
             "identityStatus": identity["identityStatus"], "identityConfidence": identity["identityConfidence"],
             "kind": "hermes-profile",
             "runtime": "hermes",
@@ -469,7 +493,8 @@ def _profile_nodes(tasks: list[Any], identities: Optional[list[dict[str, Any]]] 
     if not nodes:
         nodes.append({
             "id": "hermes:default", "label": "Hermes", "agentName": "Hermes",
-            "departmentId": "operations", "department": "Operations", "role": "Orchestrator",
+            "departmentId": "operations", "department": "Operations",
+            "teamName": _team_name("operations"), "role": "Orchestrator",
             "identityStatus": "system", "identityConfidence": "direct",
             "kind": "hermes-profile", "runtime": "hermes",
             "state": "unknown", "healthConfidence": "unsupported",
@@ -509,7 +534,8 @@ def _subagent_nodes() -> list[dict[str, Any]]:
     return [{
         "id": f"hermes-subagent:{row['id']}",
         "label": f"Delegate {str(row['id'])[:6]}", "agentName": f"Delegate {str(row['id'])[:6]}",
-        "departmentId": "operations", "department": "Operations", "role": "Delegated Subagent",
+        "departmentId": "operations", "department": "Operations",
+        "teamName": _team_name("operations"), "role": "Delegated Subagent",
         "identityStatus": "system", "identityConfidence": "direct",
         "kind": "hermes-subagent",
         "runtime": "hermes",
@@ -566,16 +592,18 @@ def _cli_nodes(roster: dict, registry: dict, pending: list[dict], blocked: list[
         if "run_message" in tool_names:
             capabilities.append("message")
         risks = []
-        named = {(row.get("agentId"), row.get("agentName"), row.get("departmentId"), row.get("department"), row.get("role"), row.get("identityStatus"), row.get("identityConfidence")) for row in sessions if row.get("agentId")}
+        named = {(row.get("agentId"), row.get("agentName"), row.get("departmentId"), row.get("department"), row.get("teamName"), row.get("role"), row.get("identityStatus"), row.get("identityConfidence")) for row in sessions if row.get("agentId")}
         if len(named) == 1:
-            agent_id, agent_name, department_id, department, role, identity_status, identity_confidence = next(iter(named))
+            agent_id, agent_name, department_id, department, team_name, role, identity_status, identity_confidence = next(iter(named))
         elif len(named) > 1:
-            agent_id, agent_name, department_id, department, role, identity_status, identity_confidence = (
-                None, f"{len(named)} Local Agents", "multiple", "Multiple departments", "Shared runtime lane", "multiple", "mixed",
+            agent_id, agent_name, department_id, department, team_name, role, identity_status, identity_confidence = (
+                None, f"{len(named)} Local Agents", "multiple", "Multiple departments",
+                "Multiple FAOSX teams", "Shared runtime lane", "multiple", "mixed",
             )
         else:
-            agent_id, agent_name, department_id, department, role, identity_status, identity_confidence = (
-                None, "Unassigned Agent", "unassigned", "Unassigned", "Local agent session", "unassigned", "unsupported",
+            agent_id, agent_name, department_id, department, team_name, role, identity_status, identity_confidence = (
+                None, "Unassigned Agent", "unassigned", "Unassigned",
+                _team_name("unassigned"), "Local agent session", "unassigned", "unsupported",
             )
         if not rows:
             risks.append({"severity": "warning" if observed_state == "degraded" else "info", "message": summary.get("message") or "No recent session telemetry; runtime readiness is unknown."})
@@ -587,7 +615,8 @@ def _cli_nodes(roster: dict, registry: dict, pending: list[dict], blocked: list[
             risks.append({"severity": "info", "message": f"{len(sessions)} session(s) need an agent identity mapping or governed title."})
         nodes.append({
             "id": f"cli:{runtime}", "label": agent_name, "agentName": agent_name,
-            "departmentId": department_id, "department": department, "role": role, "identityStatus": identity_status,
+            "departmentId": department_id, "department": department, "teamName": team_name,
+            "role": role, "identityStatus": identity_status,
             "identityConfidence": identity_confidence, "identityAgentId": agent_id,
             "runtimeLabel": {"opencode": "OpenCode", "omnigent": "Omnigent", "faos": "FAOS", "dsh": "Dsh"}.get(runtime, runtime.capitalize()),
             "kind": "cli-worker", "runtime": runtime, "state": state,
@@ -618,7 +647,7 @@ def _provider_nodes(profile_nodes: list[dict]) -> list[dict[str, Any]]:
         out.append({
             "id": f"provider:{runtime}", "label": "Grok" if runtime == "grok" else "DeepSeek",
             "agentName": "DeepSeek Backend", "departmentId": "engineering",
-            "department": "Engineering", "role": "Provider Backend",
+            "department": "Engineering", "teamName": _team_name("engineering"), "role": "Provider Backend",
             "identityStatus": "infrastructure", "identityConfidence": "direct",
             "kind": "provider", "runtime": runtime,
             "state": "working" if any(n["state"] == "working" for n in matching) else "online" if configured else "offline",
@@ -647,20 +676,23 @@ def _cursor_node(registry: Optional[dict] = None) -> dict[str, Any]:
     local_sessions = [row for row in (registry or {}).get("sessions", []) if row.get("runtime") == "cursor"]
     local_summary = next((row for row in (registry or {}).get("runtimes", []) if row.get("runtime") == "cursor"), {})
     last_local = max((row.get("lastActivityAt") for row in local_sessions if row.get("lastActivityAt")), default=None)
-    named = {(row.get("agentId"), row.get("agentName"), row.get("departmentId"), row.get("department"), row.get("role"), row.get("identityStatus"), row.get("identityConfidence")) for row in local_sessions if row.get("agentId")}
+    named = {(row.get("agentId"), row.get("agentName"), row.get("departmentId"), row.get("department"), row.get("teamName"), row.get("role"), row.get("identityStatus"), row.get("identityConfidence")) for row in local_sessions if row.get("agentId")}
     if len(named) == 1:
-        identity_agent_id, agent_name, department_id, department, role, identity_status, identity_confidence = next(iter(named))
+        identity_agent_id, agent_name, department_id, department, team_name, role, identity_status, identity_confidence = next(iter(named))
     elif len(named) > 1:
-        identity_agent_id, agent_name, department_id, department, role, identity_status, identity_confidence = (
-            None, f"{len(named)} Local Agents", "multiple", "Multiple departments", "Cursor sessions", "multiple", "mixed",
+        identity_agent_id, agent_name, department_id, department, team_name, role, identity_status, identity_confidence = (
+            None, f"{len(named)} Local Agents", "multiple", "Multiple departments",
+            "Multiple FAOSX teams", "Cursor sessions", "multiple", "mixed",
         )
     else:
-        identity_agent_id, agent_name, department_id, department, role, identity_status, identity_confidence = (
-            None, "Unassigned Agent", "unassigned", "Unassigned", "Cursor session", "unassigned", "unsupported",
+        identity_agent_id, agent_name, department_id, department, team_name, role, identity_status, identity_confidence = (
+            None, "Unassigned Agent", "unassigned", "Unassigned",
+            _team_name("unassigned"), "Cursor session", "unassigned", "unsupported",
         )
     return {
         "id": "acp:cursor", "label": agent_name, "agentName": agent_name,
-        "departmentId": department_id, "department": department, "role": role, "identityStatus": identity_status,
+        "departmentId": department_id, "department": department, "teamName": team_name,
+        "role": role, "identityStatus": identity_status,
         "identityConfidence": identity_confidence, "identityAgentId": identity_agent_id,
         "runtimeLabel": "Cursor", "kind": "acp-client", "runtime": "cursor",
         "state": "online" if active else "working" if any(row.get("state") == "working" for row in local_sessions) else "unknown" if local_sessions else "offline",

@@ -41,8 +41,8 @@ const LEGACY_DEPARTMENTS = Object.freeze({
   OPS: "operations", GTM: "sales_marketing", FIN: "finance", EXEC: "company_hq",
   LEGAL: "legal", CS: "customer_support", HR: "hr",
 });
-const SESSION_TITLE_RE = /^([a-z][a-z_]{1,31})\/([A-Za-z][A-Za-z0-9._ -]{1,39}): ([A-Za-z][A-Za-z0-9 .,_()&+\/-]{2,79})(?: \| ([A-Za-z0-9][A-Za-z0-9 ._\/-]{0,39}))?(?: \| ([A-Z][A-Z0-9-]{1,31}))?$/;
-const LEGACY_SESSION_TITLE_RE = /^([A-Z][A-Z0-9-]{1,11})\/([A-Za-z][A-Za-z0-9._ -]{1,39}): ([A-Za-z][A-Za-z0-9 .,_()&+\/-]{2,79})(?: \| ([A-Za-z0-9][A-Za-z0-9 ._\/-]{0,39}))?(?: \| ([A-Z][A-Z0-9-]{1,31}))?$/;
+const SESSION_TITLE_RE = /^([a-z][a-z_]{1,31})\/([\p{L}][\p{L}\p{M}0-9._ -]{1,39}): ([\p{L}][\p{L}\p{M}0-9 .,_()&+\/-]{2,79})(?: \| ([\p{L}0-9][\p{L}\p{M}0-9 ._\/-]{0,39}))?(?: \| ([A-Z][A-Z0-9-]{1,31}))?$/u;
+const LEGACY_SESSION_TITLE_RE = /^([A-Z][A-Z0-9-]{1,11})\/([\p{L}][\p{L}\p{M}0-9._ -]{1,39}): ([\p{L}][\p{L}\p{M}0-9 .,_()&+\/-]{2,79})(?: \| ([\p{L}0-9][\p{L}\p{M}0-9 ._\/-]{0,39}))?(?: \| ([A-Z][A-Z0-9-]{1,31}))?$/u;
 
 function toMs(value) {
   if (value === null || value === undefined || value === "") return null;

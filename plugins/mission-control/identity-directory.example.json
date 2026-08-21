@@ -2,8 +2,8 @@
   "version": "local-agent-identity/v2",
   "agents": [
     {
-      "id": "agent:atlas",
-      "name": "Atlas",
+      "id": "agent:minh-quan",
+      "name": "Minh Quân",
       "department": "engineering",
       "role": "Software Architect",
       "job": "Review authentication boundaries",
@@ -14,8 +14,8 @@
       }
     },
     {
-      "id": "agent:sentinel",
-      "name": "Sentinel",
+      "id": "agent:bao-an",
+      "name": "Bảo An",
       "department": "operations",
       "role": "Reliability Engineer",
       "matches": {

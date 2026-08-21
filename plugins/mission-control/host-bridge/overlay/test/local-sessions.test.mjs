@@ -85,6 +85,14 @@ test("parses only the governed session-title template", () => {
     source: "session-title-v2",
   });
   assert.equal(_test.parseSessionTitle("ENG/Atlas: Review auth boundaries").departmentId, "engineering");
+  assert.deepEqual(_test.parseSessionTitle("engineering/Minh Quân: Rà soát ranh giới xác thực | Nền tảng FAOSX | KB-143"), {
+    departmentId: "engineering",
+    agentName: "Minh Quân",
+    workTitle: "Rà soát ranh giới xác thực",
+    scope: "Nền tảng FAOSX",
+    workRef: "KB-143",
+    source: "session-title-v2",
+  });
   assert.equal(_test.parseSessionTitle("not_a_faosx_domain/Atlas: Review auth boundaries"), null);
   assert.equal(_test.parseSessionTitle("fix auth with sk-example-secret"), null);
   assert.equal(_test.parseSessionTitle("Atlas - review auth"), null);

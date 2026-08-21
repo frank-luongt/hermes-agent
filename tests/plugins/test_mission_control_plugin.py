@@ -173,6 +173,7 @@ def test_identity_directory_maps_exact_session_and_takes_precedence(plugin, monk
     assert identity == {
         "agentId": "agent:atlas", "agentName": "Atlas",
         "departmentId": "engineering", "department": "Engineering",
+        "teamName": "FAOSX Đội Kỹ thuật",
         "role": "Software Architect", "identityStatus": "mapped", "identityConfidence": "configured",
         "currentWork": "Review auth boundaries", "scope": "Customer Portal", "workRef": "KB-142",
     }
@@ -198,6 +199,7 @@ def test_governed_title_is_declared_not_verified(plugin):
     assert identity["agentName"] == "Sentinel"
     assert identity["departmentId"] == "engineering"
     assert identity["department"] == "Engineering"
+    assert identity["teamName"] == "FAOSX Đội Kỹ thuật"
     assert identity["identityStatus"] == "declared"
     assert identity["identityConfidence"] == "declared"
 
@@ -224,7 +226,14 @@ def test_canonical_faosx_department_title_is_normalized(plugin):
     }, [])
     assert identity["departmentId"] == "sales_marketing"
     assert identity["department"] == "Sales & Marketing"
+    assert identity["teamName"] == "FAOSX Đội Kinh doanh & Tiếp thị"
     assert identity["identityStatus"] == "declared"
+
+
+def test_all_faosx_departments_have_a_team_name(plugin):
+    assert set(plugin.FAOSX_TEAM_NAMES) == set(plugin.FAOSX_DEPARTMENTS)
+    assert plugin._team_name("products") == "FAOSX Đội Sản phẩm"
+    assert plugin._team_name("unknown") == "Chưa phân đội FAOSX"
 
 
 def test_cursor_is_offline_when_no_acp_presence_file(plugin, monkeypatch, tmp_path):
@@ -295,6 +304,7 @@ def test_frontend_contains_required_accessibility_and_security_copy():
     assert "Prompts, transcript bodies, command lines" in source
     assert "Team title convention" in source
     assert "agent.department" in source
+    assert "agent.teamName" in source
     assert "window.confirm" not in source
 
 
