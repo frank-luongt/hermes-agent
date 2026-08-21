@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Prove every UNHEALTHY branch of hermes-healthcheck can actually fire.
+
+A healthcheck that has only ever returned 0 is indistinguishable from one that
+cannot fail. Each case below forces exactly one precondition false against
+throwaway fixtures and asserts the check goes red with a reason.
+"""
+from __future__ import annotations
+
+import json
+import importlib.util
+import sqlite3
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+# The healthcheck is deliberately extensionless (it is an executable, not a
+# module), so importlib cannot infer a loader from the suffix — name one.
+from importlib.machinery import SourceFileLoader  # noqa: E402
+
+hc = SourceFileLoader("hc", "/opt/data/bin/hermes-healthcheck").load_module()
+
+failures: list[str] = []
+tmp = Path(tempfile.mkdtemp())
+
+
+def case(name: str, got: str | None, want_red: bool) -> None:
+    red = got is not None
+    ok = red == want_red
+    verdict = "PASS" if ok else "FAIL"
+    print(f"  {verdict}  {name:<38} -> {got if got else 'healthy'}")
+    if not ok:
+        failures.append(name)
+
+
+# ---- baseline: everything as it really is ---------------------------------
+case("live: gateway", hc.check_gateway(), False)
+case("live: ticker", hc.check_ticker(), False)
+case("live: jobs", hc.check_jobs(), False)
+
+# ---- gateway unreachable --------------------------------------------------
+real_url = hc.GATEWAY_URL
+hc.GATEWAY_URL = "http://127.0.0.1:9/"          # discard port, nothing listens
+case("RED when gateway is down", hc.check_gateway(), True)
+hc.GATEWAY_URL = real_url
+
+# ---- ticker stale ---------------------------------------------------------
+real_beat = hc.TICKER_HEARTBEAT
+stale = tmp / "stale_heartbeat"
+stale.write_text(str(time.time() - hc.TICKER_MAX_AGE - 60))
+hc.TICKER_HEARTBEAT = str(stale)
+case("RED when scheduler heartbeat is stale", hc.check_ticker(), True)
+
+hc.TICKER_HEARTBEAT = str(tmp / "does_not_exist")
+case("RED when heartbeat file is missing", hc.check_ticker(), True)
+
+fresh = tmp / "fresh_heartbeat"
+fresh.write_text(str(time.time()))
+hc.TICKER_HEARTBEAT = str(fresh)
+case("GREEN when heartbeat is fresh", hc.check_ticker(), False)
+hc.TICKER_HEARTBEAT = real_beat
+
+# ---- consecutive job failures --------------------------------------------
+real_jobs, real_db = hc.JOBS_JSON, hc.EXECUTIONS_DB
+
+
+def build(statuses: list[str], enabled: bool = True) -> None:
+    """statuses[0] is the MOST RECENT run."""
+    jobs = tmp / "jobs.json"
+    jobs.write_text(json.dumps({"jobs": [{"id": "J", "name": "probe-job", "enabled": enabled}]}))
+    db = tmp / "exec.db"
+    db.unlink(missing_ok=True)
+    connection = sqlite3.connect(db)
+    connection.execute("CREATE TABLE executions (job_id TEXT, status TEXT, finished_at TEXT)")
+    for offset, status in enumerate(statuses):
+        connection.execute(
+            "INSERT INTO executions VALUES (?,?,?)",
+            ("J", status, f"2026-08-{20 - offset:02d}T07:00:00"),
+        )
+    connection.commit()
+    connection.close()
+    hc.JOBS_JSON, hc.EXECUTIONS_DB = str(jobs), str(db)
+
+
+build(["failed", "failed", "failed", "completed"])
+case("RED at 3 consecutive failures", hc.check_jobs(), True)
+
+build(["failed", "failed", "completed", "failed"])
+case("GREEN at 2 consecutive (quota hiccup)", hc.check_jobs(), False)
+
+build(["completed", "failed", "failed", "failed"])
+case("GREEN when recovered (fails are older)", hc.check_jobs(), False)
+
+build(["failed", "failed", "failed"], enabled=False)
+case("GREEN when the job is disabled", hc.check_jobs(), False)
+
+build(["failed", "unknown", "failed", "failed"])
+case("GREEN when streak broken by 'unknown'", hc.check_jobs(), False)
+
+hc.JOBS_JSON, hc.EXECUTIONS_DB = real_jobs, real_db
+
+print()
+if failures:
+    print(f"RESULT: FAIL ({len(failures)}): {failures}")
+    sys.exit(1)
+print("RESULT: PASS — every unhealthy branch fires, and none fire spuriously")

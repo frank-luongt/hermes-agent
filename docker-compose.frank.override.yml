@@ -33,3 +33,32 @@ services:
       # shared .git of either canonical checkout.
       - FAOS_FF_ROOT=/mnt/faos/foundation-faos
       - FAOS_AGENT_REPOS=/opt/data/workspace/repos
+
+    # 2026-08-20. Before this, `docker inspect` reported
+    # `status=running, restarts=0, health=none` — no HEALTHCHECK had ever been
+    # defined, so Docker's only signal was "the process is alive". That was true
+    # while the scheduler's work was failing, and "Up 35 hours" told nobody
+    # anything. This tests OUTCOMES instead: the gateway answers, the cron
+    # ticker is still writing its heartbeat, and no ENABLED job has three
+    # consecutive failures.
+    #
+    # The script lives on the /opt/data bind mount rather than in the image, so
+    # it can be corrected without a rebuild — the image tag is pinned by hand
+    # here on purpose and should not move for a healthcheck edit.
+    #
+    # Damping is deliberate and measured: kanban-sync was 5 completed / 3 failed
+    # / 1 unknown over 7 days, failing on an upstream HTTP 429 usage limit and
+    # recovering on the next run. `retries: 2` on top of the script's own
+    # 3-consecutive-failure rule keeps a quota hiccup from flipping the
+    # container red — a check that flaps daily gets muted, and a muted check is
+    # decoration.
+    #
+    # `restart: unless-stopped` (base file) does NOT act on health status, so an
+    # unhealthy verdict is observational: it surfaces the problem without
+    # restart-looping a container whose state lives on a bind mount.
+    healthcheck:
+      test: ["CMD", "python3", "/opt/data/bin/hermes-healthcheck"]
+      interval: 5m
+      timeout: 30s
+      start_period: 2m
+      retries: 2

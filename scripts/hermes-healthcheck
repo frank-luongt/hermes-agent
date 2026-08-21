@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+"""Docker HEALTHCHECK for hermes-frank — tests OUTCOMES, not liveness.
+
+Why this exists (2026-08-20): `docker inspect` reported
+`status=running, restarts=0, health=none` while the container's scheduled work
+was failing. `health=none` means no HEALTHCHECK was ever defined, so Docker had
+no channel to report anything but "the process is alive" — which was true and
+told nobody anything. "Up 35 hours" was accurate and worthless.
+
+Three assertions, in cost order. Each prints one line and the script exits 1 on
+the first failure, so `docker inspect --format '{{.State.Health.Log}}'` always
+carries a reason.
+
+  1. GATEWAY  — the HTTP listener on 8642 answers at all.
+  2. TICKER   — /opt/data/cron/ticker_heartbeat is a unix timestamp the
+                scheduler rewrites every tick. Stale means the scheduler died
+                while the container kept running: the exact split this check
+                exists to catch.
+  3. JOBS     — no ENABLED job has CONSECUTIVE_FAIL_LIMIT consecutive failures.
+
+WHY CONSECUTIVE AND NOT "ANY FAILURE": measured over 7 days,
+`faosx-full-backlog-kanban-sync` was 5 completed / 3 failed / 1 unknown — it
+fails roughly a third of the time on an upstream HTTP 429 usage-limit from the
+Codex endpoint, then succeeds on the next run. A check that flipped unhealthy on
+one failure would flap daily and be muted within a week, which is how a control
+becomes decoration. Three consecutive failures is a job that is actually stuck,
+not a quota that will reset.
+
+Deliberately NOT here: any assertion that a job ran *recently*. Job cadence is
+per-job config (daily at 07:00, and so on); a freshness rule would need to read
+each schedule and would fail spuriously the first time a job is legitimately
+paused. The ticker check already covers "the scheduler stopped".
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+import sys
+import time
+import urllib.error
+import urllib.request
+
+GATEWAY_URL = "http://127.0.0.1:8642/"
+GATEWAY_TIMEOUT = 10
+JOBS_JSON = "/opt/data/cron/jobs.json"
+EXECUTIONS_DB = "/opt/data/cron/executions.db"
+TICKER_HEARTBEAT = "/opt/data/cron/ticker_heartbeat"
+
+# The ticker rewrites its heartbeat every few seconds in practice (26s old when
+# measured). 15 minutes is loose enough to survive a slow tick or a paused VM
+# and still catch a scheduler that has genuinely stopped.
+TICKER_MAX_AGE = 900
+CONSECUTIVE_FAIL_LIMIT = 3
+# Only look back this far: an old run of failures that has since recovered must
+# not pin the container unhealthy forever.
+LOOKBACK_EXECUTIONS = 10
+
+
+def fail(message: str) -> int:
+    print(f"UNHEALTHY: {message}")
+    return 1
+
+
+def check_gateway() -> str | None:
+    """Any HTTP response proves the listener is serving. 404 on / is normal."""
+    try:
+        urllib.request.urlopen(GATEWAY_URL, timeout=GATEWAY_TIMEOUT).read(1)
+    except urllib.error.HTTPError:
+        return None  # responded with a status — that is what we are testing
+    except Exception as exc:  # noqa: BLE001
+        return f"gateway {GATEWAY_URL} did not answer ({type(exc).__name__})"
+    return None
+
+
+def check_ticker() -> str | None:
+    try:
+        with open(TICKER_HEARTBEAT, encoding="utf-8") as handle:
+            beat = float(handle.read().strip())
+    except FileNotFoundError:
+        return f"scheduler heartbeat missing at {TICKER_HEARTBEAT}"
+    except (OSError, ValueError) as exc:
+        return f"scheduler heartbeat unreadable ({exc})"
+    age = time.time() - beat
+    if age > TICKER_MAX_AGE:
+        return f"scheduler heartbeat stale: {int(age)}s old (limit {TICKER_MAX_AGE}s)"
+    return None
+
+
+def check_jobs() -> str | None:
+    """Fail only on a job that is stuck, never on a single upstream hiccup."""
+    try:
+        with open(JOBS_JSON, encoding="utf-8") as handle:
+            jobs = json.load(handle).get("jobs", [])
+    except (OSError, ValueError) as exc:
+        return f"cron jobs.json unreadable ({exc})"
+
+    enabled = {j["id"]: j.get("name", j["id"]) for j in jobs if j.get("enabled")}
+    if not enabled:
+        return None
+
+    try:
+        connection = sqlite3.connect(f"file:{EXECUTIONS_DB}?mode=ro", uri=True, timeout=5)
+    except sqlite3.Error as exc:
+        return f"cron executions.db unreadable ({exc})"
+
+    try:
+        for job_id, name in enabled.items():
+            rows = connection.execute(
+                "SELECT status FROM executions WHERE job_id = ? AND finished_at IS NOT NULL "
+                "ORDER BY finished_at DESC LIMIT ?",
+                (job_id, LOOKBACK_EXECUTIONS),
+            ).fetchall()
+            streak = 0
+            for (status,) in rows:
+                if status == "failed":
+                    streak += 1
+                else:
+                    break
+            if streak >= CONSECUTIVE_FAIL_LIMIT:
+                return f"job '{name}' failed {streak} consecutive runs"
+    except sqlite3.Error as exc:
+        return f"cron executions query failed ({exc})"
+    finally:
+        connection.close()
+    return None
+
+
+def main() -> int:
+    for check in (check_gateway, check_ticker, check_jobs):
+        problem = check()
+        if problem:
+            return fail(problem)
+    print("healthy: gateway serving, scheduler ticking, no stuck jobs")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
