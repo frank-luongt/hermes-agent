@@ -14,7 +14,10 @@ export type Runtime =
   | "opencode"
   | "deepseek"
   | "grok"
-  | "cursor";
+  | "cursor"
+  | "dsh"
+  | "omnigent"
+  | "faos";
 
 export type AgentState =
   | "online"
@@ -39,4 +42,22 @@ export interface AgentNode {
   lastSeenAt: string | null;
   risks: Array<{ severity: "info" | "warning" | "critical"; message: string }>;
   telemetrySources: string[];
+}
+
+export interface LocalAgentSession {
+  id: string;
+  runtime: Runtime;
+  nativeSessionId: string;
+  state: "working" | "idle" | "waiting_approval" | "blocked" | "completed" | "failed" | "interrupted" | "stale" | "unknown";
+  title: string;
+  model: string | null;
+  workspace: string | null;
+  startedAt: string | null;
+  lastActivityAt: string | null;
+  endedAt: string | null;
+  pid: number | null;
+  ownership: "mission-control" | "foreign";
+  healthConfidence: "direct" | "inferred" | "stale" | "unsupported";
+  telemetrySource: string;
+  risks: string[];
 }

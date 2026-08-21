@@ -29,6 +29,11 @@
     degraded: "Degraded",
     offline: "Offline",
     unknown: "Unknown",
+    idle: "Idle",
+    completed: "Completed",
+    failed: "Failed",
+    interrupted: "Interrupted",
+    stale: "Stale",
   };
 
   const RUNTIME_INITIALS = {
@@ -41,6 +46,9 @@
     deepseek: "DS",
     grok: "GR",
     cursor: "CU",
+    dsh: "DH",
+    omnigent: "OM",
+    faos: "FA",
   };
 
   function classNames() {
@@ -151,10 +159,10 @@
       positions[agent.id] = { x: center.x + Math.cos(angle) * 34, y: center.y + Math.sin(angle) * 38 };
     });
     providers.forEach((agent, index) => {
-      positions[agent.id] = { x: 72 + index * 14, y: 21 + index * 15 };
+      positions[agent.id] = { x: 90 - index * 7, y: 18 + index * 13 };
     });
     clients.forEach((agent, index) => {
-      positions[agent.id] = { x: 82, y: 72 + index * 12 };
+      positions[agent.id] = { x: 91, y: 65 + index * 12 };
     });
     return positions;
   }
@@ -339,6 +347,46 @@
             ),
           ))
         : h("div", { className: "mc-empty-feed" }, "No Mission Control event has been recorded yet."),
+    );
+  }
+
+  function SessionMonitor({ sessions, coverage }) {
+    const rows = (sessions || []).slice(0, 18);
+    return h("section", { className: "mc-sessions", "aria-label": "Local agent sessions" },
+      h("div", { className: "mc-panel-heading" },
+        h("div", null, h("div", { className: "mc-eyebrow" }, "LOCAL TELEMETRY HUB"), h("h2", null, "Agent sessions")),
+        h("span", { className: "mc-source-pill is-good" }, `${rows.length} recent`),
+      ),
+      h("div", { className: "mc-runtime-coverage", "aria-label": "Runtime telemetry coverage" },
+        (coverage || []).map((item) => h("span", {
+          key: item.runtime,
+          className: classNames("mc-coverage-chip", `is-${item.state}`),
+          title: item.message,
+        }, h(StateDot, { state: item.state }), `${item.label} · ${item.healthConfidence}`)),
+      ),
+      rows.length
+        ? h("div", { className: "mc-session-list" }, rows.map((item) =>
+            h("details", { key: item.id, className: "mc-session-row" },
+              h("summary", null,
+                h("span", { className: "mc-session-runtime" }, RUNTIME_INITIALS[item.runtime] || item.runtime.slice(0, 2).toUpperCase()),
+                h("span", { className: "mc-session-main" },
+                  h("strong", null, item.title),
+                  h("small", null, `${item.runtime} · ${item.workspace || "workspace hidden"}`),
+                ),
+                h("span", { className: "mc-session-state" }, h(StateDot, { state: item.state }), item.state.replaceAll("_", " ")),
+                h("time", null, relativeTime(item.lastActivityAt || item.startedAt)),
+              ),
+              h("dl", { className: "mc-session-detail" },
+                h("div", null, h("dt", null, "Confidence"), h("dd", null, item.healthConfidence)),
+                h("div", null, h("dt", null, "Source"), h("dd", null, item.telemetrySource)),
+                h("div", null, h("dt", null, "Ownership"), h("dd", null, item.ownership)),
+                h("div", null, h("dt", null, "Model"), h("dd", null, item.model || "Not reported")),
+              ),
+              (item.risks || []).length > 0 && h("p", { className: "mc-session-risk" }, item.risks[0]),
+            ),
+          ))
+        : h("div", { className: "mc-empty-feed" }, "No normalized local session metadata is available yet."),
+      h("p", { className: "mc-session-boundary" }, "Read-only for foreign sessions. Prompts, transcript bodies, command lines, environment values, credentials, and absolute paths are excluded."),
     );
   }
 
@@ -560,6 +608,7 @@
           onReassign: () => setNotice("Choose the new owner from the Kanban task drawer; Mission Control keeps task ownership in Kanban."),
         }),
       ),
+      h(SessionMonitor, { sessions: snapshot.sessions, coverage: snapshot.runtimeCoverage }),
       h(Telemetry, { events: snapshot.events, bridge: snapshot.bridge }),
       dispatchAgent && h(DispatchModal, {
         agent: dispatchAgent,
