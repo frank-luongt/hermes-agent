@@ -78,6 +78,13 @@
     return `${Math.round(seconds / 3600)}h ago`;
   }
 
+  function sessionDisplayTitle(item) {
+    const department = item.department || "Unassigned";
+    const agentName = item.agentName || "Unassigned Agent";
+    const work = item.currentWork || "Work title not declared";
+    return `${department}/${agentName}: ${work}`;
+  }
+
   function themeIsLight() {
     const value = getComputedStyle(document.documentElement).getPropertyValue("--background-base").trim();
     const match = value.match(/^#([0-9a-f]{6})$/i);
@@ -374,9 +381,8 @@
               h("summary", null,
                 h("span", { className: "mc-session-runtime" }, RUNTIME_INITIALS[item.runtime] || item.runtime.slice(0, 2).toUpperCase()),
                 h("span", { className: "mc-session-main" },
-                  h("strong", null, item.agentName || "Unassigned Agent"),
+                  h("strong", null, sessionDisplayTitle(item)),
                   h("small", null, `${item.teamName || item.department || "Unassigned"} · ${item.role || "Local agent session"}`),
-                  h("span", { className: "mc-session-work" }, item.currentWork || "Work title not declared"),
                 ),
                 h("span", { className: "mc-session-state" }, h(StateDot, { state: item.state }), item.state.replaceAll("_", " ")),
                 h("time", null, relativeTime(item.lastActivityAt || item.startedAt)),
@@ -396,7 +402,7 @@
           ))
         : h("div", { className: "mc-empty-feed" }, "No normalized local session metadata is available yet."),
       h("p", { className: "mc-session-boundary" }, "Read-only for foreign sessions. Prompts, transcript bodies, command lines, environment values, credentials, and absolute paths are excluded."),
-      h("p", { className: "mc-session-convention" }, "Team title convention: engineering/Kien Nguyen: Rà soát ranh giới xác thực | Customer Portal | KB-142. Mission Control scans the latest 10 days; canonical FAOS identity mappings take precedence over declared titles."),
+      h("p", { className: "mc-session-convention" }, "Session title convention: Product/Khai Vuong: Review Even G2 applications | FAOS + FBrain | G2-014. Mission Control scans the latest 10 days; canonical FAOS identity mappings take precedence over declared titles."),
     );
   }
 

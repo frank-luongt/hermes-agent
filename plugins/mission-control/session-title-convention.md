@@ -3,17 +3,17 @@
 Use this title format when a CLI supports naming a session:
 
 ```text
-faosx_department/Agent: Outcome | Scope | WORK-ID
+Department/Agent Name: Job outcome | Scope | WORK-ID
 ```
 
 Examples:
 
 ```text
-engineering/Kien Nguyen: Rà soát ranh giới xác thực | Customer Portal | KB-142
-company_hq/Tuan Anh Nguyen: Đánh giá ranh giới phê duyệt | Mission Control | SEC-204
-products/Khai Vuong: Hoàn thiện tiêu chí onboarding | Mobile | STORY-88
-company_hq/Frank Luong: So sánh ưu tiên chiến lược | FAOS Platform | EXP-31
-sales_marketing/Trang Nguyen: Chuẩn bị thông điệp ra mắt | Market launch | GTM-24
+Product/Khai Vuong: Review Even G2 applications | FAOS + FBrain | G2-014
+Engineering/Kien Nguyen: Rà soát ranh giới xác thực | Customer Portal | KB-142
+Company HQ/Tuan Anh Nguyen: Đánh giá ranh giới phê duyệt | Mission Control | SEC-204
+Company HQ/Frank Luong: So sánh ưu tiên chiến lược | FAOS Platform | EXP-31
+Sales & Marketing/Trang Nguyen: Chuẩn bị thông điệp ra mắt | Market launch | GTM-24
 ```
 
 The outcome describes the intended result, not a generic activity such as
@@ -22,17 +22,20 @@ when a work reference is present, scope must also be present. Keep titles free
 of customer names, credentials, ticket secrets, prompt text, and unrestricted
 filesystem paths.
 
-The canonical FAOSX departments are `company_hq`, `wiki`, `operations`,
-`strategy`, `finance`, `products`, `engineering`, `projects`,
+Operator-facing titles use the English FAOSX department names: `Company HQ`,
+`Wiki`, `Operations`, `Strategy`, `Finance`, `Product`, `Engineering`,
+`Project`, `Sales & Marketing`, `Customer Support`, `HR`, `Legal`, and
+`Investor Relations`. Stable internal IDs remain `company_hq`, `wiki`,
+`operations`, `strategy`, `finance`, `products`, `engineering`, `projects`,
 `sales_marketing`, `customer_support`, `hr`, `legal`, and
-`investor_relations`. Legacy team codes remain readable during migration but
-new titles must use a canonical department slug.
+`investor_relations`. Legacy slugs and team codes remain readable during
+migration, but new titles must use the operator-facing department name.
 
 Agent display names should match the canonical `metadata.name` in the FAOS
 `.agent.yaml` definition. The current FAOS names use unaccented Vietnamese
 spelling. Mission Control derives the
 corresponding FAOSX team name from the canonical department, for example
-`engineering` becomes `FAOSX Engineering`; teams do not need to repeat that
+`Product` becomes `FAOSX Product`; teams do not need to repeat that
 label in each identity mapping.
 
 Mission Control parses only the exact convention. A parsed title is marked
