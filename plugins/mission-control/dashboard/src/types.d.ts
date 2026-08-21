@@ -31,6 +31,11 @@ export type AgentState =
 export interface AgentNode {
   id: string;
   label: string;
+  agentName: string;
+  department: string;
+  role: string;
+  identityStatus: "mapped" | "declared" | "system" | "profile" | "multiple" | "unassigned" | "infrastructure";
+  identityConfidence: "configured" | "declared" | "direct" | "mixed" | "unsupported";
   kind: AgentKind;
   runtime: Runtime;
   state: AgentState;
@@ -60,4 +65,13 @@ export interface LocalAgentSession {
   healthConfidence: "direct" | "inferred" | "stale" | "unsupported";
   telemetrySource: string;
   risks: string[];
+  agentId: string | null;
+  agentName: string;
+  department: string;
+  role: string;
+  identityStatus: "mapped" | "declared" | "system" | "unassigned";
+  identityConfidence: "configured" | "declared" | "direct" | "unsupported";
+  currentWork: string;
+  scope: string | null;
+  workRef: string | null;
 }

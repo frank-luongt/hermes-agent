@@ -18,6 +18,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import sqlite3
 import time
 import urllib.error
@@ -43,6 +44,15 @@ SPAWNABLE_CLI_RUNTIMES = ("claude", "codex", "qwen", "gemini", "opencode")
 CLI_RUNTIMES = SPAWNABLE_CLI_RUNTIMES + ("grok", "dsh", "omnigent", "faos")
 PROVIDER_RUNTIMES = ("deepseek",)
 SAFE_REPOS = ("Foundation-AgenticOS", "foundation-faos", "scratch")
+IDENTITY_DIRECTORY_VERSION = "local-agent-identity/v1"
+IDENTITY_DIRECTORY_FILE = "mission-control-identities.json"
+DEPARTMENT_CODES = {
+    "ENG": "Engineering", "SRE": "Site Reliability", "PROD": "Product",
+    "RES": "Research", "OPS": "Operations", "GTM": "Growth",
+    "FIN": "Finance", "EXEC": "Executive", "LEGAL": "Legal & Compliance",
+    "CS": "Customer Success", "HR": "People Operations",
+}
+SENSITIVE_IDENTITY_VALUE = re.compile(r"(?:\bBearer\b|\bsk-[A-Za-z0-9_-]{12,}|\bghp_[A-Za-z0-9]{12,}|\bgithub_pat_|\bAKIA[A-Z0-9]{12,})", re.IGNORECASE)
 
 
 def _now() -> int:
@@ -69,6 +79,106 @@ def _read_dotenv_value(path: Path, key: str) -> str:
             value = value[1:-1]
         return value
     return ""
+
+
+def _identity_text(value: Any, fallback: str, limit: int = 80) -> str:
+    if not isinstance(value, str):
+        return fallback
+    cleaned = " ".join(value.replace("\x00", "").split()).strip()
+    if cleaned.startswith(("/", "~/")) or ":\\" in cleaned or SENSITIVE_IDENTITY_VALUE.search(cleaned):
+        return fallback
+    return cleaned[:limit] or fallback
+
+
+def _load_identity_directory() -> list[dict[str, Any]]:
+    """Load an operator-owned, local-only identity mapping.
+
+    Selectors are exact strings. Regex and paths are intentionally unsupported,
+    which keeps the mapping deterministic and prevents config from becoming a
+    data-exfiltration surface.
+    """
+    path = get_hermes_home() / IDENTITY_DIRECTORY_FILE
+    try:
+        if path.stat().st_size > 256_000:
+            raise ValueError("identity directory exceeds 256 KB")
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return []
+    identities = []
+    for item in list(raw.get("agents") or [])[:100] if isinstance(raw, dict) else []:
+        if not isinstance(item, dict):
+            continue
+        matches = item.get("matches") if isinstance(item.get("matches"), dict) else {}
+        identity_id = _identity_text(item.get("id"), "", 120)
+        name = _identity_text(item.get("name"), "", 80)
+        if not identity_id or not name:
+            continue
+        identities.append({
+            "agentId": identity_id,
+            "agentName": name,
+            "department": _identity_text(item.get("department"), "Unassigned", 80),
+            "role": _identity_text(item.get("role"), "Agent", 100),
+            "matches": {
+                key: {_identity_text(value, "", 160) for value in values if _identity_text(value, "", 160)}
+                for key, values in matches.items()
+                if key in {"sessionIds", "runtimes", "workspaces", "profiles"} and isinstance(values, list)
+            },
+        })
+    return identities
+
+
+def _resolve_identity(session: dict[str, Any], identities: list[dict[str, Any]]) -> dict[str, Any]:
+    values = {
+        "sessionIds": {str(session.get("id") or ""), str(session.get("nativeSessionId") or "")},
+        "runtimes": {str(session.get("runtime") or "")},
+        "workspaces": {str(session.get("workspace") or "")},
+        "profiles": {str(session.get("profile") or "")},
+    }
+    ranked = []
+    weights = {"sessionIds": 100, "profiles": 80, "workspaces": 40, "runtimes": 10}
+    for identity in identities:
+        selectors = identity.get("matches") or {}
+        if not selectors or any(not (set(expected) & values[key]) for key, expected in selectors.items()):
+            continue
+        ranked.append((sum(weights[key] for key in selectors), identity))
+    if ranked:
+        identity = max(ranked, key=lambda row: row[0])[1]
+        return {key: identity[key] for key in ("agentId", "agentName", "department", "role")} | {
+            "identityStatus": "mapped", "identityConfidence": "configured",
+        }
+    declared = session.get("declaredIdentity") if isinstance(session.get("declaredIdentity"), dict) else None
+    if declared and declared.get("source") == "session-title-v1":
+        agent_name = _identity_text(declared.get("agentName"), "Unassigned Agent", 80)
+        code = _identity_text(declared.get("departmentCode"), "UNASSIGNED", 12).upper()
+        digest = hashlib.sha256(f"{code}:{agent_name}".encode()).hexdigest()[:10]
+        return {
+            "agentId": f"declared:{code.lower()}:{digest}", "agentName": agent_name,
+            "department": DEPARTMENT_CODES.get(code, code), "role": "Declared session owner",
+            "identityStatus": "declared", "identityConfidence": "declared",
+        }
+    if session.get("runtime") == "hermes":
+        return {
+            "agentId": "hermes:default", "agentName": "Hermes", "department": "Agent Operations",
+            "role": "Orchestrator", "identityStatus": "system", "identityConfidence": "direct",
+        }
+    return {
+        "agentId": None, "agentName": "Unassigned Agent", "department": "Unassigned",
+        "role": "Local agent session", "identityStatus": "unassigned", "identityConfidence": "unsupported",
+    }
+
+
+def _enrich_sessions(registry: dict[str, Any], identities: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, int]]:
+    sessions = []
+    for row in registry.get("sessions", []):
+        if not isinstance(row, dict):
+            continue
+        sessions.append({**row, **_resolve_identity(row, identities)})
+    mapped = sum(1 for row in sessions if row["identityStatus"] in {"mapped", "system"})
+    declared = sum(1 for row in sessions if row["identityStatus"] == "declared")
+    return {**registry, "sessions": sessions}, {
+        "mapped": mapped, "declared": declared, "unassigned": len(sessions) - mapped - declared,
+        "configuredAgents": len(identities),
+    }
 
 
 def _bridge_token() -> str:
@@ -255,7 +365,20 @@ def _task_prompt(task: Any) -> str:
     return prompt[:8000]
 
 
-def _profile_nodes(tasks: list[Any]) -> list[dict[str, Any]]:
+def _profile_identity(name: str, identities: list[dict[str, Any]]) -> dict[str, Any]:
+    resolved = _resolve_identity({"runtime": "hermes", "profile": name}, identities)
+    if resolved["identityStatus"] == "mapped":
+        return resolved
+    if name == "default":
+        return resolved
+    return {
+        "agentId": f"hermes:{name}", "agentName": name, "department": "Agent Operations",
+        "role": "Hermes Profile", "identityStatus": "profile", "identityConfidence": "direct",
+    }
+
+
+def _profile_nodes(tasks: list[Any], identities: Optional[list[dict[str, Any]]] = None) -> list[dict[str, Any]]:
+    identities = identities or []
     try:
         from hermes_cli import profiles as profiles_mod
         profiles = profiles_mod.list_profiles()
@@ -274,6 +397,7 @@ def _profile_nodes(tasks: list[Any]) -> list[dict[str, Any]]:
         provider = raw.get("provider")
         model = raw.get("model")
         gateway_running = bool(raw.get("gateway_running"))
+        identity = _profile_identity(name, identities)
         task = task_by_assignee.get(name)
         state = "working" if task and task.status == "running" else "blocked" if task and task.status == "blocked" else "online" if gateway_running else "unknown"
         risks = []
@@ -281,7 +405,9 @@ def _profile_nodes(tasks: list[Any]) -> list[dict[str, Any]]:
             risks.append({"severity": "info", "message": "Gateway presence is not directly observed for this profile."})
         nodes.append({
             "id": f"hermes:{name}",
-            "label": "Hermes" if name == "default" else name,
+            "label": identity["agentName"], "agentName": identity["agentName"],
+            "department": identity["department"], "role": identity["role"],
+            "identityStatus": identity["identityStatus"], "identityConfidence": identity["identityConfidence"],
             "kind": "hermes-profile",
             "runtime": "hermes",
             "state": state,
@@ -296,7 +422,10 @@ def _profile_nodes(tasks: list[Any]) -> list[dict[str, Any]]:
         })
     if not nodes:
         nodes.append({
-            "id": "hermes:default", "label": "Hermes", "kind": "hermes-profile", "runtime": "hermes",
+            "id": "hermes:default", "label": "Hermes", "agentName": "Hermes",
+            "department": "Agent Operations", "role": "Orchestrator",
+            "identityStatus": "system", "identityConfidence": "direct",
+            "kind": "hermes-profile", "runtime": "hermes",
             "state": "unknown", "healthConfidence": "unsupported",
             "capabilities": ["observe", "dispatch", "reassign"], "currentTask": None,
             "provider": None, "model": None, "lastSeenAt": None,
@@ -333,7 +462,9 @@ def _subagent_nodes() -> list[dict[str, Any]]:
         return []
     return [{
         "id": f"hermes-subagent:{row['id']}",
-        "label": f"Delegate {str(row['id'])[:6]}",
+        "label": f"Delegate {str(row['id'])[:6]}", "agentName": f"Delegate {str(row['id'])[:6]}",
+        "department": "Agent Operations", "role": "Delegated Subagent",
+        "identityStatus": "system", "identityConfidence": "direct",
         "kind": "hermes-subagent",
         "runtime": "hermes",
         "state": "working",
@@ -389,14 +520,30 @@ def _cli_nodes(roster: dict, registry: dict, pending: list[dict], blocked: list[
         if "run_message" in tool_names:
             capabilities.append("message")
         risks = []
+        named = {(row.get("agentId"), row.get("agentName"), row.get("department"), row.get("role"), row.get("identityStatus"), row.get("identityConfidence")) for row in sessions if row.get("agentId")}
+        if len(named) == 1:
+            agent_id, agent_name, department, role, identity_status, identity_confidence = next(iter(named))
+        elif len(named) > 1:
+            agent_id, agent_name, department, role, identity_status, identity_confidence = (
+                None, f"{len(named)} Local Agents", "Multiple departments", "Shared runtime lane", "multiple", "mixed",
+            )
+        else:
+            agent_id, agent_name, department, role, identity_status, identity_confidence = (
+                None, "Unassigned Agent", "Unassigned", "Local agent session", "unassigned", "unsupported",
+            )
         if not rows:
             risks.append({"severity": "warning" if observed_state == "degraded" else "info", "message": summary.get("message") or "No recent session telemetry; runtime readiness is unknown."})
         if pending_by_runtime[runtime]:
             risks.append({"severity": "warning", "message": f"{len(pending_by_runtime[runtime])} request(s) await host approval."})
         if blocked_by_runtime[runtime]:
             risks.append({"severity": "critical", "message": f"{len(blocked_by_runtime[runtime])} session(s) may be blocked."})
+        if sessions and not named:
+            risks.append({"severity": "info", "message": f"{len(sessions)} session(s) need an agent identity mapping or governed title."})
         nodes.append({
-            "id": f"cli:{runtime}", "label": {"opencode": "OpenCode", "omnigent": "Omnigent", "faos": "FAOS", "dsh": "Dsh"}.get(runtime, runtime.capitalize()),
+            "id": f"cli:{runtime}", "label": agent_name, "agentName": agent_name,
+            "department": department, "role": role, "identityStatus": identity_status,
+            "identityConfidence": identity_confidence, "identityAgentId": agent_id,
+            "runtimeLabel": {"opencode": "OpenCode", "omnigent": "Omnigent", "faos": "FAOS", "dsh": "Dsh"}.get(runtime, runtime.capitalize()),
             "kind": "cli-worker", "runtime": runtime, "state": state,
             "healthConfidence": summary.get("healthConfidence") or ("direct" if rows else "stale"),
             "capabilities": capabilities, "currentTask": _task_public(task_by_assignee[runtime]) if runtime in task_by_assignee else None,
@@ -424,6 +571,8 @@ def _provider_nodes(profile_nodes: list[dict]) -> list[dict[str, Any]]:
             capabilities.append("dispatch")
         out.append({
             "id": f"provider:{runtime}", "label": "Grok" if runtime == "grok" else "DeepSeek",
+            "agentName": "DeepSeek Backend", "department": "Model Infrastructure", "role": "Provider Backend",
+            "identityStatus": "infrastructure", "identityConfidence": "direct",
             "kind": "provider", "runtime": runtime,
             "state": "working" if any(n["state"] == "working" for n in matching) else "online" if configured else "offline",
             "healthConfidence": "inferred" if configured else "unsupported",
@@ -451,8 +600,22 @@ def _cursor_node(registry: Optional[dict] = None) -> dict[str, Any]:
     local_sessions = [row for row in (registry or {}).get("sessions", []) if row.get("runtime") == "cursor"]
     local_summary = next((row for row in (registry or {}).get("runtimes", []) if row.get("runtime") == "cursor"), {})
     last_local = max((row.get("lastActivityAt") for row in local_sessions if row.get("lastActivityAt")), default=None)
+    named = {(row.get("agentId"), row.get("agentName"), row.get("department"), row.get("role"), row.get("identityStatus"), row.get("identityConfidence")) for row in local_sessions if row.get("agentId")}
+    if len(named) == 1:
+        identity_agent_id, agent_name, department, role, identity_status, identity_confidence = next(iter(named))
+    elif len(named) > 1:
+        identity_agent_id, agent_name, department, role, identity_status, identity_confidence = (
+            None, f"{len(named)} Local Agents", "Multiple departments", "Cursor sessions", "multiple", "mixed",
+        )
+    else:
+        identity_agent_id, agent_name, department, role, identity_status, identity_confidence = (
+            None, "Unassigned Agent", "Unassigned", "Cursor session", "unassigned", "unsupported",
+        )
     return {
-        "id": "acp:cursor", "label": "Cursor", "kind": "acp-client", "runtime": "cursor",
+        "id": "acp:cursor", "label": agent_name, "agentName": agent_name,
+        "department": department, "role": role, "identityStatus": identity_status,
+        "identityConfidence": identity_confidence, "identityAgentId": identity_agent_id,
+        "runtimeLabel": "Cursor", "kind": "acp-client", "runtime": "cursor",
         "state": "online" if active else "working" if any(row.get("state") == "working" for row in local_sessions) else "unknown" if local_sessions else "offline",
         "healthConfidence": "direct" if marker.exists() else local_summary.get("healthConfidence", "unsupported"),
         "capabilities": ["observe", "configure"], "currentTask": None,
@@ -568,7 +731,9 @@ def build_snapshot(board: Optional[str] = None) -> dict[str, Any]:
         kb.close()
 
     roster, registry, pending, blocked, tool_names, bridge_error = _bridge_snapshot()
-    profiles = _profile_nodes(tasks)
+    identities = _load_identity_directory()
+    registry, identity_counts = _enrich_sessions(registry, identities)
+    profiles = _profile_nodes(tasks, identities)
     agents = profiles + _subagent_nodes() + _cli_nodes(roster, registry, pending, blocked, tool_names, tasks) + _provider_nodes(profiles) + [_cursor_node(registry)]
 
     mission = _mission_conn()
@@ -595,6 +760,11 @@ def build_snapshot(board: Optional[str] = None) -> dict[str, Any]:
         "sessionContract": registry.get("contractVersion", "local-agent-session/v1"),
         "sessions": registry.get("sessions", []),
         "runtimeCoverage": registry.get("runtimes", []),
+        "identityDirectory": {
+            "contractVersion": IDENTITY_DIRECTORY_VERSION,
+            "configured": bool(identities),
+            **identity_counts,
+        },
         "tasks": [_task_public(t) for t in ready_tasks[:100]],
         "runs": [_public_run(r) for r in run_rows],
         "events": [{

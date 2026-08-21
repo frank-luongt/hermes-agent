@@ -445,6 +445,7 @@
 }
 
 .mc-agent-core {
+  position: relative;
   display: flex;
   width: 46px;
   height: 46px;
@@ -458,6 +459,22 @@
   font-family: "Mission Mono", var(--theme-font-mono, monospace);
   font-size: 11px;
   transition: transform 160ms ease, border-color 160ms ease, background-color 160ms ease;
+}
+
+.mc-runtime-badge {
+  position: absolute;
+  right: -5px;
+  bottom: -3px;
+  display: grid;
+  min-width: 19px;
+  height: 16px;
+  padding: 0 4px;
+  place-items: center;
+  border: 1px solid var(--mc-border-strong);
+  border-radius: 999px;
+  color: var(--mc-accent);
+  background: var(--mc-panel-solid);
+  font-size: 6px;
 }
 
 .mc-agent-node > .mc-state-dot {
@@ -1028,7 +1045,7 @@
   grid-template-columns: 34px minmax(0, 1fr) auto auto;
   gap: 10px;
   align-items: center;
-  min-height: 58px;
+  min-height: 68px;
   padding: 9px 12px;
   cursor: pointer;
   list-style: none;
@@ -1051,6 +1068,7 @@
 .mc-session-main { display: grid; min-width: 0; gap: 3px; }
 .mc-session-main strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .mc-session-main small { overflow: hidden; color: var(--mc-muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.mc-session-work { overflow: hidden; color: var(--mc-text); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .mc-session-state { display: inline-flex; gap: 6px; align-items: center; color: var(--mc-muted); font-size: 9px; text-transform: uppercase; }
 .mc-session-row time { color: var(--mc-muted); font: 9px/1 "Mission Mono", var(--theme-font-mono, monospace); }
 
@@ -1068,6 +1086,14 @@
 .mc-session-detail dd { margin: 4px 0 0; overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .mc-session-risk { margin: 0; padding: 0 12px 11px; color: var(--mc-warning); font-size: 9px; }
 .mc-session-boundary { margin: 12px 0 0; color: var(--mc-muted); font-size: 9px; }
+.mc-session-convention {
+  margin: 7px 0 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--mc-accent);
+  color: var(--mc-muted);
+  background: color-mix(in srgb, var(--mc-accent) 6%, transparent);
+  font: 9px/1.5 "Mission Mono", var(--theme-font-mono, monospace);
+}
 
 @media (max-width: 1180px) {
   .mission-control { padding: 16px; }

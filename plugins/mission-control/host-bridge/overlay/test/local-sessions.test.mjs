@@ -18,6 +18,12 @@ test("normalizes roster sessions without prompts or absolute workspaces", async 
     home,
     nowMs: Date.parse("2026-08-21T04:00:00Z"),
     roster: {
+      claude: {
+        rows: [{
+          sessionId: "claude-1", name: "ENG/Atlas: Review auth boundaries | Customer Portal | KB-142",
+          cwd: "/Users/example/private/repo", lastActivityAt: Date.parse("2026-08-21T03:59:45Z"), pid: 123,
+        }],
+      },
       codex: {
         rows: [{ sessionId: "abc-123", cwd: "/Users/example/private/repo", lastActivityAt: Date.parse("2026-08-21T03:59:30Z") }],
         runningProcesses: [{ pid: 456, startedAt: Date.parse("2026-08-21T03:58:00Z"), args: "codex secret prompt" }],
@@ -29,9 +35,14 @@ test("normalizes roster sessions without prompts or absolute workspaces", async 
   });
   assert.equal(result.contractVersion, LOCAL_SESSION_CONTRACT);
   assert.equal(result.scope, "local-machine");
-  assert.equal(result.sessions[0].workspace, "repo");
-  assert.equal(result.sessions[0].state, "working");
-  assert.equal(result.sessions[1].telemetrySource, "codex-process");
+  const claude = result.sessions.find((row) => row.id === "claude:claude-1");
+  const codexProcess = result.sessions.find((row) => row.telemetrySource === "codex-process");
+  assert.equal(claude.workspace, "repo");
+  assert.equal(claude.state, "working");
+  assert.equal(claude.currentWork, "Review auth boundaries");
+  assert.equal(claude.workRef, "KB-142");
+  assert.equal(claude.declaredIdentity.agentName, "Atlas");
+  assert.equal(codexProcess.telemetrySource, "codex-process");
   const rendered = JSON.stringify(result);
   assert.equal(rendered.includes("/Users/example"), false);
   assert.equal(rendered.includes("secret prompt"), false);
@@ -61,4 +72,17 @@ test("timestamp and workspace helpers reject misleading values", () => {
   assert.equal(_test.activityState(null, Date.now()), "unknown");
   assert.equal(_test.safeWorkspace("/private/customer/alpha"), "alpha");
   assert.equal(_test.session("grok", "../../escape", {}).nativeSessionId.includes("/"), false);
+});
+
+test("parses only the governed session-title template", () => {
+  assert.deepEqual(_test.parseSessionTitle("ENG/Atlas: Review auth boundaries | Customer Portal | KB-142"), {
+    departmentCode: "ENG",
+    agentName: "Atlas",
+    workTitle: "Review auth boundaries",
+    scope: "Customer Portal",
+    workRef: "KB-142",
+    source: "session-title-v1",
+  });
+  assert.equal(_test.parseSessionTitle("fix auth with sk-example-secret"), null);
+  assert.equal(_test.parseSessionTitle("Atlas - review auth"), null);
 });
