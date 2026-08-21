@@ -1,20 +1,22 @@
 {
-  "version": "local-agent-identity/v1",
+  "version": "local-agent-identity/v2",
   "agents": [
     {
       "id": "agent:atlas",
       "name": "Atlas",
-      "department": "Engineering",
+      "department": "engineering",
       "role": "Software Architect",
+      "job": "Review authentication boundaries",
+      "scope": "Customer Portal",
+      "workRef": "KB-142",
       "matches": {
-        "runtimes": ["codex"],
-        "workspaces": ["Foundation-AgenticOS"]
+        "sessionIds": ["codex:replace-with-session-id"]
       }
     },
     {
       "id": "agent:sentinel",
       "name": "Sentinel",
-      "department": "Site Reliability",
+      "department": "operations",
       "role": "Reliability Engineer",
       "matches": {
         "sessionIds": ["claude:replace-with-session-id"]

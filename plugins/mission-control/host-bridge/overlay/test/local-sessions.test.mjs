@@ -20,7 +20,7 @@ test("normalizes roster sessions without prompts or absolute workspaces", async 
     roster: {
       claude: {
         rows: [{
-          sessionId: "claude-1", name: "ENG/Atlas: Review auth boundaries | Customer Portal | KB-142",
+          sessionId: "claude-1", name: "engineering/Atlas: Review auth boundaries | Customer Portal | KB-142",
           cwd: "/Users/example/private/repo", lastActivityAt: Date.parse("2026-08-21T03:59:45Z"), pid: 123,
         }],
       },
@@ -42,6 +42,7 @@ test("normalizes roster sessions without prompts or absolute workspaces", async 
   assert.equal(claude.currentWork, "Review auth boundaries");
   assert.equal(claude.workRef, "KB-142");
   assert.equal(claude.declaredIdentity.agentName, "Atlas");
+  assert.equal(claude.declaredIdentity.departmentId, "engineering");
   assert.equal(codexProcess.telemetrySource, "codex-process");
   const rendered = JSON.stringify(result);
   assert.equal(rendered.includes("/Users/example"), false);
@@ -75,14 +76,35 @@ test("timestamp and workspace helpers reject misleading values", () => {
 });
 
 test("parses only the governed session-title template", () => {
-  assert.deepEqual(_test.parseSessionTitle("ENG/Atlas: Review auth boundaries | Customer Portal | KB-142"), {
-    departmentCode: "ENG",
+  assert.deepEqual(_test.parseSessionTitle("engineering/Atlas: Review auth boundaries | Customer Portal | KB-142"), {
+    departmentId: "engineering",
     agentName: "Atlas",
     workTitle: "Review auth boundaries",
     scope: "Customer Portal",
     workRef: "KB-142",
-    source: "session-title-v1",
+    source: "session-title-v2",
   });
+  assert.equal(_test.parseSessionTitle("ENG/Atlas: Review auth boundaries").departmentId, "engineering");
+  assert.equal(_test.parseSessionTitle("not_a_faosx_domain/Atlas: Review auth boundaries"), null);
   assert.equal(_test.parseSessionTitle("fix auth with sk-example-secret"), null);
   assert.equal(_test.parseSessionTitle("Atlas - review auth"), null);
+});
+
+test("returns only sessions active in the latest ten days", async () => {
+  const home = fixtureHome();
+  const nowMs = Date.parse("2026-08-21T04:00:00Z");
+  const result = await listLocalSessions({
+    home,
+    nowMs,
+    roster: { codex: { rows: [
+      { sessionId: "recent", lastActivityAt: nowMs - 9 * 24 * 60 * 60_000 },
+      { sessionId: "old", lastActivityAt: nowMs - 11 * 24 * 60 * 60_000 },
+    ] } },
+    runCommand: async () => ({ ok: false, stdout: "", stderr: "" }),
+    processFinder: async () => [],
+    fetchImpl: null,
+  });
+  assert.equal(result.windowDays, 10);
+  assert.equal(result.sessions.some((row) => row.id === "codex:recent"), true);
+  assert.equal(result.sessions.some((row) => row.id === "codex:old"), false);
 });

@@ -357,8 +357,8 @@
     const named = (identityDirectory?.mapped || 0) + (identityDirectory?.declared || 0);
     return h("section", { className: "mc-sessions", "aria-label": "Local agent sessions" },
       h("div", { className: "mc-panel-heading" },
-        h("div", null, h("div", { className: "mc-eyebrow" }, "LOCAL TELEMETRY HUB"), h("h2", null, "Agent sessions")),
-        h("span", { className: classNames("mc-source-pill", named ? "is-good" : "is-warning") }, `${named} named · ${identityDirectory?.unassigned || 0} unassigned`),
+        h("div", null, h("div", { className: "mc-eyebrow" }, "LOCAL TELEMETRY HUB · FAOSX DOMAINS"), h("h2", null, "Agent sessions")),
+        h("span", { className: classNames("mc-source-pill", named ? "is-good" : "is-warning") }, `${named} named · ${identityDirectory?.system || 0} system · ${identityDirectory?.unassigned || 0} unassigned`),
       ),
       h("div", { className: "mc-runtime-coverage", "aria-label": "Runtime telemetry coverage" },
         (coverage || []).map((item) => h("span", {
@@ -394,7 +394,7 @@
           ))
         : h("div", { className: "mc-empty-feed" }, "No normalized local session metadata is available yet."),
       h("p", { className: "mc-session-boundary" }, "Read-only for foreign sessions. Prompts, transcript bodies, command lines, environment values, credentials, and absolute paths are excluded."),
-      h("p", { className: "mc-session-convention" }, "Team title convention: ENG/Atlas: Review auth boundaries | Customer Portal | KB-142. Work reference is optional; parsed identity is declared, not verified."),
+      h("p", { className: "mc-session-convention" }, "Team title convention: engineering/Atlas: Review auth boundaries | Customer Portal | KB-142. Mission Control scans the latest 10 days; mapped identity takes precedence over declared titles."),
     );
   }
 

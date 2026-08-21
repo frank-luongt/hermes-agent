@@ -153,10 +153,12 @@ def test_local_session_registry_drives_monitor_only_runtime_state(plugin):
 
 def test_identity_directory_maps_exact_session_and_takes_precedence(plugin, monkeypatch, tmp_path):
     directory = {
-        "version": "local-agent-identity/v1",
+        "version": "local-agent-identity/v2",
         "agents": [{
-            "id": "agent:atlas", "name": "Atlas", "department": "Engineering",
-            "role": "Software Architect", "matches": {"sessionIds": ["codex:run-1"]},
+            "id": "agent:atlas", "name": "Atlas", "department": "engineering",
+            "role": "Software Architect", "job": "Review auth boundaries",
+            "scope": "Customer Portal", "workRef": "KB-142",
+            "matches": {"sessionIds": ["codex:run-1"]},
         }],
     }
     (tmp_path / plugin.IDENTITY_DIRECTORY_FILE).write_text(json.dumps(directory), encoding="utf-8")
@@ -169,8 +171,10 @@ def test_identity_directory_maps_exact_session_and_takes_precedence(plugin, monk
         },
     }, identities)
     assert identity == {
-        "agentId": "agent:atlas", "agentName": "Atlas", "department": "Engineering",
+        "agentId": "agent:atlas", "agentName": "Atlas",
+        "departmentId": "engineering", "department": "Engineering",
         "role": "Software Architect", "identityStatus": "mapped", "identityConfidence": "configured",
+        "currentWork": "Review auth boundaries", "scope": "Customer Portal", "workRef": "KB-142",
     }
 
 
@@ -192,7 +196,8 @@ def test_governed_title_is_declared_not_verified(plugin):
         },
     }, [])
     assert identity["agentName"] == "Sentinel"
-    assert identity["department"] == "Site Reliability"
+    assert identity["departmentId"] == "engineering"
+    assert identity["department"] == "Engineering"
     assert identity["identityStatus"] == "declared"
     assert identity["identityConfidence"] == "declared"
 
@@ -206,8 +211,20 @@ def test_session_enrichment_counts_mapped_declared_and_unassigned(plugin):
         {"id": "codex:3", "runtime": "codex"},
     ]}
     enriched, counts = plugin._enrich_sessions(registry, [])
-    assert counts == {"mapped": 1, "declared": 1, "unassigned": 1, "configuredAgents": 0}
+    assert counts == {"mapped": 0, "declared": 1, "system": 1, "unassigned": 1, "configuredAgents": 0}
     assert [row["identityStatus"] for row in enriched["sessions"]] == ["system", "declared", "unassigned"]
+
+
+def test_canonical_faosx_department_title_is_normalized(plugin):
+    identity = plugin._resolve_identity({
+        "id": "claude:run-4", "runtime": "claude",
+        "declaredIdentity": {
+            "source": "session-title-v2", "departmentId": "sales_marketing", "agentName": "Beacon",
+        },
+    }, [])
+    assert identity["departmentId"] == "sales_marketing"
+    assert identity["department"] == "Sales & Marketing"
+    assert identity["identityStatus"] == "declared"
 
 
 def test_cursor_is_offline_when_no_acp_presence_file(plugin, monkeypatch, tmp_path):

@@ -3,31 +3,39 @@
 Use this title format when a CLI supports naming a session:
 
 ```text
-DEPT/Agent: Outcome | Scope | WORK-ID
+faosx_department/Agent: Outcome | Scope | WORK-ID
 ```
 
 Examples:
 
 ```text
-ENG/Atlas: Review auth boundaries | Customer Portal | KB-142
-SRE/Sentinel: Diagnose API latency | Staging | INC-204
-PROD/Nova: Refine onboarding acceptance | Mobile | STORY-88
-RES/Curie: Compare retrieval strategies | Knowledge Platform | EXP-31
+engineering/Atlas: Review auth boundaries | Customer Portal | KB-142
+operations/Sentinel: Diagnose API latency | Staging | INC-204
+products/Nova: Refine onboarding acceptance | Mobile | STORY-88
+strategy/Curie: Compare retrieval strategies | Knowledge Platform | EXP-31
+sales_marketing/Beacon: Prepare launch narrative | Market launch | GTM-24
 ```
 
-The outcome should describe the intended result, not a generic activity such as
+The outcome describes the intended result, not a generic activity such as
 "working" or "coding." Scope and the final Kanban/story reference are optional;
-when a work reference is present, scope must also be present. Keep titles free of customer names,
-credentials, ticket secrets, prompt text, and unrestricted filesystem paths.
+when a work reference is present, scope must also be present. Keep titles free
+of customer names, credentials, ticket secrets, prompt text, and unrestricted
+filesystem paths.
 
-Supported department codes are `ENG`, `SRE`, `PROD`, `RES`, `OPS`, `GTM`, `FIN`,
-`EXEC`, `LEGAL`, `CS`, and `HR`. A different uppercase code is displayed literally.
+The canonical FAOSX departments are `company_hq`, `wiki`, `operations`,
+`strategy`, `finance`, `products`, `engineering`, `projects`,
+`sales_marketing`, `customer_support`, `hr`, `legal`, and
+`investor_relations`. Legacy team codes remain readable during migration but
+new titles must use a canonical department slug.
 
 Mission Control parses only the exact convention. A parsed title is marked
 **declared**, because a session can describe its identity but cannot verify it.
-The operator-owned identity directory remains authoritative and takes precedence.
+The operator-owned identity directory remains authoritative and takes
+precedence. The local telemetry window is the latest 10 days; active sessions
+remain visible even when a runtime cannot report a reliable timestamp.
 
 For tools without named sessions, copy `identity-directory.example.json` to
 `$HERMES_HOME/mission-control-identities.json` and use exact runtime, workspace,
-profile, or session-ID selectors. Do not map an entire runtime to one agent when
+profile, or session-ID selectors. Session-specific mappings may also supply
+`job`, `scope`, and `workRef`. Do not map an entire runtime to one agent when
 several agents share that runtime.
