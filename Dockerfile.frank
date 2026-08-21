@@ -1,7 +1,6 @@
 #
-# Frank's Hermes gateway = the pinned upstream image + the few things the agent
-# needs to do real GitHub work. Deliberately thin: no Hermes changes here, so a
-# version bump is a one-line FROM edit.
+# Frank's Hermes gateway = the pinned upstream image + audited local hardening
+# needed by this profile.
 #
 FROM nousresearch/hermes-agent:v2026.8.3
 
@@ -25,5 +24,17 @@ RUN git config --system user.name  "Hermes Agent" \
  && git config --system init.defaultBranch main \
  && git config --system push.default current \
  && git config --system --add safe.directory '*'
+
+# The upstream OAuth path is browser-PKCE only. Frank's unattended container
+# uses a pre-registered, source- and slug-fenced client_credentials grant that
+# refreshes in memory and never falls back to a legacy admin bearer.
+COPY tools/mcp_client_credentials.py /opt/hermes/tools/mcp_client_credentials.py
+COPY docker/hermes-mcp-client-credentials.patch /tmp/hermes-mcp-client-credentials.patch
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends patch \
+ && patch /opt/hermes/tools/mcp_tool.py /tmp/hermes-mcp-client-credentials.patch \
+ && apt-get purge -y --auto-remove patch \
+ && rm -rf /var/lib/apt/lists/* \
+ && rm /tmp/hermes-mcp-client-credentials.patch
 # safe.directory '*' is required, not cosmetic: bind-mounted repos are owned by
 # the host uid, and git refuses "dubious ownership" trees without it.
