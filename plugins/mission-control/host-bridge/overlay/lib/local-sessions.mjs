@@ -36,12 +36,28 @@ const FAOSX_DEPARTMENTS = new Set([
   "engineering", "projects", "sales_marketing", "customer_support", "hr",
   "legal", "investor_relations",
 ]);
+const DISPLAY_DEPARTMENTS = Object.freeze({
+  "Company HQ": "company_hq",
+  Wiki: "wiki",
+  Operations: "operations",
+  Strategy: "strategy",
+  Finance: "finance",
+  Product: "products",
+  Engineering: "engineering",
+  Project: "projects",
+  "Sales & Marketing": "sales_marketing",
+  "Customer Support": "customer_support",
+  HR: "hr",
+  Legal: "legal",
+  "Investor Relations": "investor_relations",
+});
 const LEGACY_DEPARTMENTS = Object.freeze({
   ENG: "engineering", SRE: "engineering", PROD: "products", RES: "strategy",
   OPS: "operations", GTM: "sales_marketing", FIN: "finance", EXEC: "company_hq",
   LEGAL: "legal", CS: "customer_support", HR: "hr",
 });
-const SESSION_TITLE_RE = /^([a-z][a-z_]{1,31})\/([\p{L}][\p{L}\p{M}0-9._ -]{1,39}): ([\p{L}][\p{L}\p{M}0-9 .,_()&+\/-]{2,79})(?: \| ([\p{L}0-9][\p{L}\p{M}0-9 ._\/-]{0,39}))?(?: \| ([A-Z][A-Z0-9-]{1,31}))?$/u;
+const DISPLAY_SESSION_TITLE_RE = /^([A-Z][A-Za-z &]{1,31})\/([\p{L}][\p{L}\p{M}0-9._ -]{1,39}): ([\p{L}][\p{L}\p{M}0-9 .,_()&+\/-]{2,79})(?: \| ([\p{L}0-9][\p{L}\p{M}0-9 ._&+\/-]{0,39}))?(?: \| ([A-Z][A-Z0-9-]{1,31}))?$/u;
+const SLUG_SESSION_TITLE_RE = /^([a-z][a-z_]{1,31})\/([\p{L}][\p{L}\p{M}0-9._ -]{1,39}): ([\p{L}][\p{L}\p{M}0-9 .,_()&+\/-]{2,79})(?: \| ([\p{L}0-9][\p{L}\p{M}0-9 ._&+\/-]{0,39}))?(?: \| ([A-Z][A-Z0-9-]{1,31}))?$/u;
 const LEGACY_SESSION_TITLE_RE = /^([A-Z][A-Z0-9-]{1,11})\/([\p{L}][\p{L}\p{M}0-9._ -]{1,39}): ([\p{L}][\p{L}\p{M}0-9 .,_()&+\/-]{2,79})(?: \| ([\p{L}0-9][\p{L}\p{M}0-9 ._\/-]{0,39}))?(?: \| ([A-Z][A-Z0-9-]{1,31}))?$/u;
 
 function toMs(value) {
@@ -100,11 +116,13 @@ function runtimeLabel(runtime) {
 function parseSessionTitle(value) {
   if (typeof value !== "string" || value.length > 180) return null;
   const title = value.trim();
-  const canonical = title.match(SESSION_TITLE_RE);
-  const legacy = canonical ? null : title.match(LEGACY_SESSION_TITLE_RE);
-  const match = canonical ?? legacy;
+  const display = title.match(DISPLAY_SESSION_TITLE_RE);
+  const displayDepartment = display ? DISPLAY_DEPARTMENTS[display[1]] : null;
+  const canonical = displayDepartment ? null : title.match(SLUG_SESSION_TITLE_RE);
+  const legacy = displayDepartment || canonical ? null : title.match(LEGACY_SESSION_TITLE_RE);
+  const match = displayDepartment ? display : canonical ?? legacy;
   if (!match) return null;
-  const departmentId = canonical ? match[1] : LEGACY_DEPARTMENTS[match[1]];
+  const departmentId = displayDepartment ?? (canonical ? match[1] : LEGACY_DEPARTMENTS[match[1]]);
   if (!departmentId || !FAOSX_DEPARTMENTS.has(departmentId)) return null;
   return {
     departmentId,
@@ -112,7 +130,7 @@ function parseSessionTitle(value) {
     workTitle: match[3].trim(),
     scope: match[4]?.trim() ?? null,
     workRef: match[5]?.trim() ?? null,
-    source: canonical ? "session-title-v2" : "session-title-v1",
+    source: displayDepartment ? "session-title-v3" : canonical ? "session-title-v2" : "session-title-v1",
   };
 }
 

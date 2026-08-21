@@ -76,6 +76,14 @@ test("timestamp and workspace helpers reject misleading values", () => {
 });
 
 test("parses only the governed session-title template", () => {
+  assert.deepEqual(_test.parseSessionTitle("Product/Khai Vuong: Review Even G2 applications | FAOS + FBrain | G2-014"), {
+    departmentId: "products",
+    agentName: "Khai Vuong",
+    workTitle: "Review Even G2 applications",
+    scope: "FAOS + FBrain",
+    workRef: "G2-014",
+    source: "session-title-v3",
+  });
   assert.deepEqual(_test.parseSessionTitle("engineering/Atlas: Review auth boundaries | Customer Portal | KB-142"), {
     departmentId: "engineering",
     agentName: "Atlas",
@@ -94,6 +102,7 @@ test("parses only the governed session-title template", () => {
     source: "session-title-v2",
   });
   assert.equal(_test.parseSessionTitle("not_a_faosx_domain/Atlas: Review auth boundaries"), null);
+  assert.equal(_test.parseSessionTitle("Product Design/Khai Vuong: Review Even G2 applications"), null);
   assert.equal(_test.parseSessionTitle("fix auth with sk-example-secret"), null);
   assert.equal(_test.parseSessionTitle("Atlas - review auth"), null);
 });
