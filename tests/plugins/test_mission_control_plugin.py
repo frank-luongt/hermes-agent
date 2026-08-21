@@ -99,7 +99,7 @@ def test_websocket_auth_fails_closed_without_server_token(plugin, monkeypatch):
 
 
 def test_missing_cli_telemetry_is_unknown_not_healthy(plugin):
-    nodes = plugin._cli_nodes({}, [], [], set(), [])
+    nodes = plugin._cli_nodes({}, {}, [], [], set(), [])
     assert {node["runtime"] for node in nodes} == set(plugin.CLI_RUNTIMES)
     assert all(node["state"] == "unknown" for node in nodes)
     assert all(node["healthConfidence"] == "stale" for node in nodes)
@@ -110,7 +110,7 @@ def test_pending_and_blocked_state_precedence(plugin):
     roster = {"codex": {"rows": [{"pid": 123, "lastActivityAt": 1000}]}}
     pending = [{"tool": "spawn_codex_task"}]
     blocked = [{"agent": "claude"}]
-    nodes = {node["runtime"]: node for node in plugin._cli_nodes(roster, pending, blocked, {"spawn_codex_task"}, [])}
+    nodes = {node["runtime"]: node for node in plugin._cli_nodes(roster, {}, pending, blocked, {"spawn_codex_task"}, [])}
     assert nodes["codex"]["state"] == "waiting_approval"
     assert nodes["claude"]["state"] == "blocked"
     assert "dispatch" in nodes["codex"]["capabilities"]
@@ -126,7 +126,27 @@ def test_provider_dispatch_is_capability_gated_by_matching_profile(plugin, monke
     nodes = {node["runtime"]: node for node in plugin._provider_nodes([profile])}
     assert "dispatch" in nodes["deepseek"]["capabilities"]
     assert nodes["deepseek"]["matchingProfiles"] == ["hermes:researcher"]
-    assert "dispatch" not in nodes["grok"]["capabilities"]
+    assert set(nodes) == {"deepseek"}
+
+
+def test_local_session_registry_drives_monitor_only_runtime_state(plugin):
+    registry = {
+        "sessions": [{
+            "id": "omnigent:run-1", "runtime": "omnigent", "state": "working",
+            "lastActivityAt": "2026-08-21T04:00:00Z", "model": None,
+            "telemetrySource": "omnigent-chat-db",
+        }],
+        "runtimes": [{
+            "runtime": "omnigent", "state": "working", "healthConfidence": "direct",
+            "message": "1 local session observed.",
+        }],
+    }
+    nodes = {node["runtime"]: node for node in plugin._cli_nodes({}, registry, [], [], set(), [])}
+    assert nodes["omnigent"]["state"] == "working"
+    assert nodes["omnigent"]["healthConfidence"] == "direct"
+    assert nodes["omnigent"]["sessionCount"] == 1
+    assert "dispatch" not in nodes["omnigent"]["capabilities"]
+    assert "omnigent-chat-db" in nodes["omnigent"]["telemetrySources"]
 
 
 def test_cursor_is_offline_when_no_acp_presence_file(plugin, monkeypatch, tmp_path):
@@ -193,6 +213,8 @@ def test_frontend_contains_required_accessibility_and_security_copy():
     assert '"aria-modal"' in source
     assert "Host approval required" in source
     assert "It cannot target foreign sessions" in source
+    assert "LOCAL TELEMETRY HUB" in source
+    assert "Prompts, transcript bodies, command lines" in source
     assert "window.confirm" not in source
 
 

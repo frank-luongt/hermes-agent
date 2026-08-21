@@ -39,8 +39,9 @@ BRIDGE_URL = os.environ.get("HERMES_BRIDGE_URL", "http://host.docker.internal:31
 BRIDGE_TIMEOUT_SECONDS = 4.0
 ACTIVE_MISSION_STATUSES = {"awaiting_approval", "pending", "approved", "running"}
 TERMINAL_BRIDGE_STATUSES = {"done", "failed", "denied", "expired", "interrupted"}
-CLI_RUNTIMES = ("claude", "codex", "qwen", "gemini", "opencode")
-PROVIDER_RUNTIMES = ("deepseek", "grok")
+SPAWNABLE_CLI_RUNTIMES = ("claude", "codex", "qwen", "gemini", "opencode")
+CLI_RUNTIMES = SPAWNABLE_CLI_RUNTIMES + ("grok", "dsh", "omnigent", "faos")
+PROVIDER_RUNTIMES = ("deepseek",)
 SAFE_REPOS = ("Foundation-AgenticOS", "foundation-faos", "scratch")
 
 
@@ -352,7 +353,7 @@ def _runtime_rows(roster: dict, runtime: str) -> list[dict]:
     return list(section.get("rows") or [])
 
 
-def _cli_nodes(roster: dict, pending: list[dict], blocked: list[dict], tool_names: set[str], tasks: list[Any]) -> list[dict[str, Any]]:
+def _cli_nodes(roster: dict, registry: dict, pending: list[dict], blocked: list[dict], tool_names: set[str], tasks: list[Any]) -> list[dict[str, Any]]:
     nodes = []
     pending_by_runtime: dict[str, list] = {name: [] for name in CLI_RUNTIMES}
     for item in pending:
@@ -372,10 +373,15 @@ def _cli_nodes(roster: dict, pending: list[dict], blocked: list[dict], tool_name
     }
 
     for runtime in CLI_RUNTIMES:
-        rows = _runtime_rows(roster, runtime)
-        live = [r for r in rows if r.get("pid") or r.get("running")]
-        state = "waiting_approval" if pending_by_runtime[runtime] else "blocked" if blocked_by_runtime[runtime] else "working" if live else "online" if rows else "unknown"
-        latest = max((r.get("lastActivityAt") or 0 for r in rows), default=0)
+        sessions = [row for row in registry.get("sessions", []) if row.get("runtime") == runtime]
+        rows = sessions or _runtime_rows(roster, runtime)
+        summary = next((item for item in registry.get("runtimes", []) if item.get("runtime") == runtime), {})
+        live = [r for r in rows if r.get("pid") or r.get("running") or r.get("state") in {"working", "waiting_approval", "blocked"}]
+        observed_state = str(summary.get("state") or "")
+        state = "waiting_approval" if pending_by_runtime[runtime] else "blocked" if blocked_by_runtime[runtime] else "working" if live else "degraded" if observed_state == "degraded" else "online" if rows else "offline" if observed_state == "offline" else "unknown"
+        latest_values = [r.get("lastActivityAt") or r.get("startedAt") for r in rows]
+        latest_iso = max((value for value in latest_values if isinstance(value, str)), default=None)
+        latest_epoch = max((value for value in latest_values if isinstance(value, (int, float))), default=0)
         spawn_tool = f"spawn_{runtime}_task"
         capabilities = ["observe", "logs", "cost"]
         if spawn_tool in tool_names:
@@ -384,18 +390,19 @@ def _cli_nodes(roster: dict, pending: list[dict], blocked: list[dict], tool_name
             capabilities.append("message")
         risks = []
         if not rows:
-            risks.append({"severity": "info", "message": "No recent session telemetry; runtime readiness is unknown."})
+            risks.append({"severity": "warning" if observed_state == "degraded" else "info", "message": summary.get("message") or "No recent session telemetry; runtime readiness is unknown."})
         if pending_by_runtime[runtime]:
             risks.append({"severity": "warning", "message": f"{len(pending_by_runtime[runtime])} request(s) await host approval."})
         if blocked_by_runtime[runtime]:
             risks.append({"severity": "critical", "message": f"{len(blocked_by_runtime[runtime])} session(s) may be blocked."})
         nodes.append({
-            "id": f"cli:{runtime}", "label": runtime.capitalize() if runtime != "opencode" else "OpenCode",
+            "id": f"cli:{runtime}", "label": {"opencode": "OpenCode", "omnigent": "Omnigent", "faos": "FAOS", "dsh": "Dsh"}.get(runtime, runtime.capitalize()),
             "kind": "cli-worker", "runtime": runtime, "state": state,
-            "healthConfidence": "direct" if rows else "stale",
+            "healthConfidence": summary.get("healthConfidence") or ("direct" if rows else "stale"),
             "capabilities": capabilities, "currentTask": _task_public(task_by_assignee[runtime]) if runtime in task_by_assignee else None,
-            "provider": None, "model": None, "lastSeenAt": _iso(latest / 1000 if latest > 10_000_000_000 else latest),
-            "risks": risks, "telemetrySources": ["host-bridge", "kanban"],
+            "provider": None, "model": next((row.get("model") for row in rows if row.get("model")), None),
+            "lastSeenAt": latest_iso or _iso(latest_epoch / 1000 if latest_epoch > 10_000_000_000 else latest_epoch),
+            "risks": risks, "telemetrySources": sorted({"host-bridge", "kanban", *(str(row.get("telemetrySource")) for row in sessions if row.get("telemetrySource"))}),
             "sessionCount": len(rows),
         })
     return nodes
@@ -432,7 +439,7 @@ def _provider_nodes(profile_nodes: list[dict]) -> list[dict[str, Any]]:
     return out
 
 
-def _cursor_node() -> dict[str, Any]:
+def _cursor_node(registry: Optional[dict] = None) -> dict[str, Any]:
     marker = get_hermes_home() / "workspace" / "bridge" / "acp-clients.json"
     clients: list[dict] = []
     try:
@@ -441,31 +448,36 @@ def _cursor_node() -> dict[str, Any]:
     except (OSError, json.JSONDecodeError, AttributeError):
         pass
     active = [c for c in clients if c.get("connected")]
+    local_sessions = [row for row in (registry or {}).get("sessions", []) if row.get("runtime") == "cursor"]
+    local_summary = next((row for row in (registry or {}).get("runtimes", []) if row.get("runtime") == "cursor"), {})
+    last_local = max((row.get("lastActivityAt") for row in local_sessions if row.get("lastActivityAt")), default=None)
     return {
         "id": "acp:cursor", "label": "Cursor", "kind": "acp-client", "runtime": "cursor",
-        "state": "online" if active else "offline",
-        "healthConfidence": "direct" if marker.exists() else "unsupported",
+        "state": "online" if active else "working" if any(row.get("state") == "working" for row in local_sessions) else "unknown" if local_sessions else "offline",
+        "healthConfidence": "direct" if marker.exists() else local_summary.get("healthConfidence", "unsupported"),
         "capabilities": ["observe", "configure"], "currentTask": None,
         "provider": None, "model": None,
-        "lastSeenAt": max((c.get("lastSeenAt") for c in clients if c.get("lastSeenAt")), default=None),
-        "risks": [] if active else [{"severity": "info", "message": "No Cursor ACP client is connected; process spawning is intentionally unavailable."}],
-        "telemetrySources": ["acp-presence"], "sessionCount": len(active),
+        "lastSeenAt": max([value for value in [last_local, *(c.get("lastSeenAt") for c in clients)] if value], default=None),
+        "risks": [] if active else [{"severity": "info", "message": "No Cursor ACP client is connected; local activity may be inferred and process spawning is intentionally unavailable."}],
+        "telemetrySources": ["acp-presence", "host-bridge"], "sessionCount": len(local_sessions) or len(active),
     }
 
 
-def _bridge_snapshot() -> tuple[dict, list[dict], list[dict], set[str], Optional[str]]:
+def _bridge_snapshot() -> tuple[dict, dict, list[dict], list[dict], set[str], Optional[str]]:
     client = BridgeClient()
     if not client.configured:
-        return {}, [], [], set(), "Host bridge credentials are not available inside Hermes."
+        return {}, {}, [], [], set(), "Host bridge credentials are not available inside Hermes."
     try:
         tools = client.list_tools()
+        tool_names = {str(t.get("name")) for t in tools}
         roster = client.call("agents_list")
+        registry = client.call("sessions_list", {"limit": 160}) if "sessions_list" in tool_names else {}
         pending = (client.call("pending_approvals") or {}).get("pending") or []
         blocked_result = client.call("blocked_list") or {}
         blocked = blocked_result.get("blocked") or []
-        return roster or {}, pending, blocked, {str(t.get("name")) for t in tools}, None
+        return roster or {}, registry or {}, pending, blocked, tool_names, None
     except BridgeError as exc:
-        return {}, [], [], set(), str(exc)
+        return {}, {}, [], [], set(), str(exc)
 
 
 def _normalize_bridge_status(value: Any) -> str:
@@ -555,9 +567,9 @@ def build_snapshot(board: Optional[str] = None) -> dict[str, Any]:
     finally:
         kb.close()
 
-    roster, pending, blocked, tool_names, bridge_error = _bridge_snapshot()
+    roster, registry, pending, blocked, tool_names, bridge_error = _bridge_snapshot()
     profiles = _profile_nodes(tasks)
-    agents = profiles + _subagent_nodes() + _cli_nodes(roster, pending, blocked, tool_names, tasks) + _provider_nodes(profiles) + [_cursor_node()]
+    agents = profiles + _subagent_nodes() + _cli_nodes(roster, registry, pending, blocked, tool_names, tasks) + _provider_nodes(profiles) + [_cursor_node(registry)]
 
     mission = _mission_conn()
     try:
@@ -580,6 +592,9 @@ def build_snapshot(board: Optional[str] = None) -> dict[str, Any]:
         "currentBoard": current,
         "boards": boards,
         "agents": agents,
+        "sessionContract": registry.get("contractVersion", "local-agent-session/v1"),
+        "sessions": registry.get("sessions", []),
+        "runtimeCoverage": registry.get("runtimes", []),
         "tasks": [_task_public(t) for t in ready_tasks[:100]],
         "runs": [_public_run(r) for r in run_rows],
         "events": [{
@@ -677,7 +692,7 @@ def dispatch_task(task_id: str, payload: DispatchBody, board: Optional[str] = Qu
         if not agent_id.startswith("cli:"):
             raise HTTPException(status_code=409, detail="this agent type cannot be spawned")
         runtime = agent_id.split(":", 1)[1]
-        if runtime not in CLI_RUNTIMES:
+        if runtime not in SPAWNABLE_CLI_RUNTIMES:
             raise HTTPException(status_code=400, detail="unknown CLI runtime")
         client = BridgeClient()
         tool = f"spawn_{runtime}_task"
@@ -775,7 +790,7 @@ def reassign_task(task_id: str, payload: ReassignBody, board: Optional[str] = Qu
             assignee = payload.agent_id.split(":", 1)[1]
         elif payload.agent_id.startswith("cli:"):
             runtime = payload.agent_id.split(":", 1)[1]
-            if runtime not in CLI_RUNTIMES:
+            if runtime not in SPAWNABLE_CLI_RUNTIMES:
                 raise HTTPException(status_code=400, detail="unknown CLI runtime")
             assignee = f"ext:{runtime}"
         else:
