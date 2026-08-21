@@ -2,10 +2,10 @@
   "version": "local-agent-identity/v2",
   "agents": [
     {
-      "id": "agent:minh-quan",
-      "name": "Minh Quân",
+      "id": "faos:architect",
+      "name": "Kien Nguyen",
       "department": "engineering",
-      "role": "Software Architect",
+      "role": "Architect",
       "job": "Review authentication boundaries",
       "scope": "Customer Portal",
       "workRef": "KB-142",
@@ -14,10 +14,10 @@
       }
     },
     {
-      "id": "agent:bao-an",
-      "name": "Bảo An",
-      "department": "operations",
-      "role": "Reliability Engineer",
+      "id": "faos:ciso",
+      "name": "Tuan Anh Nguyen",
+      "department": "company_hq",
+      "role": "Chief Information Security Officer",
       "matches": {
         "sessionIds": ["claude:replace-with-session-id"]
       }

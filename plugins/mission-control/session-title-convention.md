@@ -9,11 +9,11 @@ faosx_department/Agent: Outcome | Scope | WORK-ID
 Examples:
 
 ```text
-engineering/Minh Quân: Rà soát ranh giới xác thực | Customer Portal | KB-142
-operations/Bảo An: Chẩn đoán độ trễ API | Staging | INC-204
-products/Ngọc Mai: Hoàn thiện tiêu chí onboarding | Mobile | STORY-88
-strategy/Gia Hưng: So sánh chiến lược truy xuất | Knowledge Platform | EXP-31
-sales_marketing/Khánh Linh: Chuẩn bị thông điệp ra mắt | Market launch | GTM-24
+engineering/Kien Nguyen: Rà soát ranh giới xác thực | Customer Portal | KB-142
+company_hq/Tuan Anh Nguyen: Đánh giá ranh giới phê duyệt | Mission Control | SEC-204
+products/Khai Vuong: Hoàn thiện tiêu chí onboarding | Mobile | STORY-88
+company_hq/Frank Luong: So sánh ưu tiên chiến lược | FAOS Platform | EXP-31
+sales_marketing/Trang Nguyen: Chuẩn bị thông điệp ra mắt | Market launch | GTM-24
 ```
 
 The outcome describes the intended result, not a generic activity such as
@@ -28,9 +28,11 @@ The canonical FAOSX departments are `company_hq`, `wiki`, `operations`,
 `investor_relations`. Legacy team codes remain readable during migration but
 new titles must use a canonical department slug.
 
-Agent display names may use Vietnamese Unicode. Mission Control derives the
+Agent display names should match the canonical `metadata.name` in the FAOS
+`.agent.yaml` definition. The current FAOS names use unaccented Vietnamese
+spelling. Mission Control derives the
 corresponding FAOSX team name from the canonical department, for example
-`engineering` becomes `FAOSX Đội Kỹ thuật`; teams do not need to repeat that
+`engineering` becomes `FAOSX Engineering`; teams do not need to repeat that
 label in each identity mapping.
 
 Mission Control parses only the exact convention. A parsed title is marked

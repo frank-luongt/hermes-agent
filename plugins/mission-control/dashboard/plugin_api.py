@@ -62,19 +62,8 @@ FAOSX_DEPARTMENTS = {
     "investor_relations": "Investor Relations",
 }
 FAOSX_TEAM_NAMES = {
-    "company_hq": "FAOSX Ban Điều hành",
-    "wiki": "FAOSX Đội Tri thức",
-    "operations": "FAOSX Đội Vận hành",
-    "strategy": "FAOSX Đội Chiến lược",
-    "finance": "FAOSX Đội Tài chính",
-    "products": "FAOSX Đội Sản phẩm",
-    "engineering": "FAOSX Đội Kỹ thuật",
-    "projects": "FAOSX Đội Dự án",
-    "sales_marketing": "FAOSX Đội Kinh doanh & Tiếp thị",
-    "customer_support": "FAOSX Đội Hỗ trợ Khách hàng",
-    "hr": "FAOSX Đội Nhân sự",
-    "legal": "FAOSX Đội Pháp chế",
-    "investor_relations": "FAOSX Đội Quan hệ Nhà đầu tư",
+    department_id: f"FAOSX {department_name}"
+    for department_id, department_name in FAOSX_DEPARTMENTS.items()
 }
 LEGACY_DEPARTMENT_CODES = {
     "ENG": "engineering", "SRE": "engineering", "PROD": "products",
@@ -139,7 +128,7 @@ def _department(value: Any) -> tuple[str, str]:
 
 
 def _team_name(department_id: str) -> str:
-    return FAOSX_TEAM_NAMES.get(department_id, "Chưa phân đội FAOSX")
+    return FAOSX_TEAM_NAMES.get(department_id, "FAOSX Unassigned")
 
 
 def _load_identity_directory() -> list[dict[str, Any]]:

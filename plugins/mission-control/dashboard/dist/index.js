@@ -396,7 +396,7 @@
           ))
         : h("div", { className: "mc-empty-feed" }, "No normalized local session metadata is available yet."),
       h("p", { className: "mc-session-boundary" }, "Read-only for foreign sessions. Prompts, transcript bodies, command lines, environment values, credentials, and absolute paths are excluded."),
-      h("p", { className: "mc-session-convention" }, "Team title convention: engineering/Minh Quân: Rà soát ranh giới xác thực | Customer Portal | KB-142. Mission Control scans the latest 10 days; mapped identity takes precedence over declared titles."),
+      h("p", { className: "mc-session-convention" }, "Team title convention: engineering/Kien Nguyen: Rà soát ranh giới xác thực | Customer Portal | KB-142. Mission Control scans the latest 10 days; canonical FAOS identity mappings take precedence over declared titles."),
     );
   }
 
