@@ -28,8 +28,21 @@ export const LOCAL_RUNTIMES = Object.freeze([
 
 const ACTIVE_MS = 90_000;
 const IDLE_MS = 15 * 60_000;
+const RECENT_WINDOW_DAYS = 10;
+const RECENT_WINDOW_MS = RECENT_WINDOW_DAYS * 24 * 60 * 60_000;
 const RECENT_LIMIT = 25;
-const SESSION_TITLE_RE = /^([A-Z][A-Z0-9-]{1,11})\/([A-Za-z][A-Za-z0-9._ -]{1,39}): ([A-Za-z][A-Za-z0-9 .,_()&+\/-]{2,79})(?: \| ([A-Za-z0-9][A-Za-z0-9 ._\/-]{0,39}))?(?: \| ([A-Z][A-Z0-9-]{1,31}))?$/;
+const FAOSX_DEPARTMENTS = new Set([
+  "company_hq", "wiki", "operations", "strategy", "finance", "products",
+  "engineering", "projects", "sales_marketing", "customer_support", "hr",
+  "legal", "investor_relations",
+]);
+const LEGACY_DEPARTMENTS = Object.freeze({
+  ENG: "engineering", SRE: "engineering", PROD: "products", RES: "strategy",
+  OPS: "operations", GTM: "sales_marketing", FIN: "finance", EXEC: "company_hq",
+  LEGAL: "legal", CS: "customer_support", HR: "hr",
+});
+const SESSION_TITLE_RE = /^([a-z][a-z_]{1,31})\/([A-Za-z][A-Za-z0-9._ -]{1,39}): ([A-Za-z][A-Za-z0-9 .,_()&+\/-]{2,79})(?: \| ([A-Za-z0-9][A-Za-z0-9 ._\/-]{0,39}))?(?: \| ([A-Z][A-Z0-9-]{1,31}))?$/;
+const LEGACY_SESSION_TITLE_RE = /^([A-Z][A-Z0-9-]{1,11})\/([A-Za-z][A-Za-z0-9._ -]{1,39}): ([A-Za-z][A-Za-z0-9 .,_()&+\/-]{2,79})(?: \| ([A-Za-z0-9][A-Za-z0-9 ._\/-]{0,39}))?(?: \| ([A-Z][A-Z0-9-]{1,31}))?$/;
 
 function toMs(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -86,15 +99,20 @@ function runtimeLabel(runtime) {
 
 function parseSessionTitle(value) {
   if (typeof value !== "string" || value.length > 180) return null;
-  const match = value.trim().match(SESSION_TITLE_RE);
+  const title = value.trim();
+  const canonical = title.match(SESSION_TITLE_RE);
+  const legacy = canonical ? null : title.match(LEGACY_SESSION_TITLE_RE);
+  const match = canonical ?? legacy;
   if (!match) return null;
+  const departmentId = canonical ? match[1] : LEGACY_DEPARTMENTS[match[1]];
+  if (!departmentId || !FAOSX_DEPARTMENTS.has(departmentId)) return null;
   return {
-    departmentCode: match[1],
+    departmentId,
     agentName: match[2].trim(),
     workTitle: match[3].trim(),
     scope: match[4]?.trim() ?? null,
     workRef: match[5]?.trim() ?? null,
-    source: "session-title-v1",
+    source: canonical ? "session-title-v2" : "session-title-v1",
   };
 }
 
@@ -465,11 +483,17 @@ export async function listLocalSessions({
   const byId = new Map();
   for (const row of collected.flat()) byId.set(row.id, row);
   const sessions = [...byId.values()]
+    .filter((row) => {
+      if (["working", "waiting_approval", "blocked"].includes(row.state)) return true;
+      const activity = toMs(row.lastActivityAt ?? row.startedAt);
+      return activity !== null && activity >= nowMs - RECENT_WINDOW_MS;
+    })
     .sort((a, b) => (Date.parse(b.lastActivityAt ?? b.startedAt ?? 0) || 0) - (Date.parse(a.lastActivityAt ?? a.startedAt ?? 0) || 0))
     .slice(0, 160);
   return redactDeep({
     contractVersion: LOCAL_SESSION_CONTRACT,
     generatedAt: new Date(nowMs).toISOString(),
+    windowDays: RECENT_WINDOW_DAYS,
     scope: "local-machine",
     operator: "local",
     sessions,

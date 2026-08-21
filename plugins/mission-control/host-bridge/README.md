@@ -27,7 +27,13 @@ An operator-owned `mission-control-identities.json` file maps exact session,
 workspace, profile, or runtime selectors to agent name, department, and role.
 See `../../identity-directory.example.json`.
 
-Named sessions may declare safe context using `DEPT/Agent: Outcome | Scope`.
+Named sessions may declare safe context using
+`faosx_department/Agent: Outcome | Scope | WORK-ID`.
 Only this strict template is parsed; arbitrary session titles are not exported.
 Declared identity is visibly weaker than an operator-configured mapping. See
 `../../session-title-convention.md` for team guidance.
+
+The pilot scans the latest 10 days and uses the canonical FAOSX departments:
+`company_hq`, `wiki`, `operations`, `strategy`, `finance`, `products`,
+`engineering`, `projects`, `sales_marketing`, `customer_support`, `hr`,
+`legal`, and `investor_relations`.

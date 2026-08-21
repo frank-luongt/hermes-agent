@@ -32,6 +32,7 @@ export interface AgentNode {
   id: string;
   label: string;
   agentName: string;
+  departmentId: string;
   department: string;
   role: string;
   identityStatus: "mapped" | "declared" | "system" | "profile" | "multiple" | "unassigned" | "infrastructure";
@@ -67,6 +68,7 @@ export interface LocalAgentSession {
   risks: string[];
   agentId: string | null;
   agentName: string;
+  departmentId: string;
   department: string;
   role: string;
   identityStatus: "mapped" | "declared" | "system" | "unassigned";
