@@ -98,9 +98,13 @@ RUN cd web && npm run build && \
 # packages (discord.py, telegram, slack, etc.) at first gateway boot.
 # Without this, `uv pip install` fails with EACCES and all messaging
 # adapters silently fail to load.  See tools/lazy_deps.py.
+# The dashboard embeds the Ink TUI and may rebuild it at runtime when sources
+# are newer than dist. Keep those build artifacts owned by the runtime user so
+# remapped Docker users do not hit EACCES on first chat launch.
 USER root
 RUN chmod -R a+rX /opt/hermes && \
-    chown -R hermes:hermes /opt/hermes/.venv /opt/hermes/ui-tui /opt/hermes/node_modules
+    chown -R hermes:hermes /opt/hermes/.venv /opt/hermes/ui-tui /opt/hermes/node_modules && \
+    if [ -d /opt/hermes/hermes_cli/web_dist ]; then chown -R hermes:hermes /opt/hermes/hermes_cli/web_dist; fi
 # Start as root so the entrypoint can usermod/groupmod + gosu.
 # If HERMES_UID is unset, the entrypoint drops to the default hermes user (10000).
 

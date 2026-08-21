@@ -67,5 +67,7 @@ services:
     environment:
       - HERMES_UID=${HERMES_UID:-10000}
       - HERMES_GID=${HERMES_GID:-10000}
+      - HERMES_DASHBOARD_TUI=${HERMES_DASHBOARD_TUI:-1}
+      - GATEWAY_HEALTH_URL=${GATEWAY_HEALTH_URL:-http://127.0.0.1:8642}
     # Localhost-only. For remote access, tunnel via `ssh -L 9119:localhost:9119`.
     command: ["dashboard", "--host", "127.0.0.1", "--no-open"]

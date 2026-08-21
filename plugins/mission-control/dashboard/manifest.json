@@ -1,0 +1,14 @@
+{
+  "name": "mission-control",
+  "label": "Mission Control",
+  "description": "Jarvis-style command center for Hermes profiles, local coding agents, providers, and Kanban runs",
+  "icon": "Activity",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/mission-control",
+    "position": "before:sessions"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

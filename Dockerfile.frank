@@ -1,0 +1,45 @@
+#
+# Frank's Hermes gateway = the pinned upstream image + audited local hardening
+# needed by this profile.
+#
+FROM nousresearch/hermes-agent:v2026.8.3
+
+# gh is not in the upstream image, so `gh pr`/`gh run` — the whole review loop —
+# is unavailable without this. Installed from the release tarball rather than an
+# apt repo: no signing-key dance, and the version is pinned in one place.
+ARG GH_VERSION=2.97.0
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${arch}.tar.gz" \
+      -o /tmp/gh.tgz; \
+    tar -xzf /tmp/gh.tgz -C /tmp; \
+    install -m 0755 "/tmp/gh_${GH_VERSION}_linux_${arch}/bin/gh" /usr/local/bin/gh; \
+    rm -rf /tmp/gh.tgz "/tmp/gh_${GH_VERSION}_linux_${arch}"; \
+    gh --version
+
+# Commits fail outright without an identity. A distinct one keeps agent commits
+# auditable in `git log` instead of impersonating Frank.
+RUN git config --system user.name  "Hermes Agent" \
+ && git config --system user.email "hermes@faos.local" \
+ && git config --system init.defaultBranch main \
+ && git config --system push.default current \
+ && git config --system --add safe.directory '*'
+
+# The upstream OAuth path is browser-PKCE only. Frank's unattended container
+# uses a pre-registered, source- and slug-fenced client_credentials grant that
+# refreshes in memory and never falls back to a legacy admin bearer.
+COPY tools/mcp_client_credentials.py /opt/hermes/tools/mcp_client_credentials.py
+COPY docker/hermes-mcp-client-credentials.patch /tmp/hermes-mcp-client-credentials.patch
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends patch \
+ && patch /opt/hermes/tools/mcp_tool.py /tmp/hermes-mcp-client-credentials.patch \
+ && apt-get purge -y --auto-remove patch \
+ && rm -rf /var/lib/apt/lists/* \
+ && rm /tmp/hermes-mcp-client-credentials.patch
+
+# Frank's bundled operator surface. It is served by the existing authenticated
+# dashboard at /mission-control; the host-only approval service remains outside
+# the image and is never proxied through the dashboard or Tailnet entry point.
+COPY plugins/mission-control /opt/hermes/plugins/mission-control
+# safe.directory '*' is required, not cosmetic: bind-mounted repos are owned by
+# the host uid, and git refuses "dubious ownership" trees without it.
