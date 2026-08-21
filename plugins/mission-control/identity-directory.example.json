@@ -1,0 +1,24 @@
+{
+  "version": "local-agent-identity/v1",
+  "agents": [
+    {
+      "id": "agent:atlas",
+      "name": "Atlas",
+      "department": "Engineering",
+      "role": "Software Architect",
+      "matches": {
+        "runtimes": ["codex"],
+        "workspaces": ["Foundation-AgenticOS"]
+      }
+    },
+    {
+      "id": "agent:sentinel",
+      "name": "Sentinel",
+      "department": "Site Reliability",
+      "role": "Reliability Engineer",
+      "matches": {
+        "sessionIds": ["claude:replace-with-session-id"]
+      }
+    }
+  ]
+}

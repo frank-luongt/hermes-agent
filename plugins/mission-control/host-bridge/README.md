@@ -19,3 +19,15 @@ The future FAOS integration boundary is the versioned session contract, not this
 host-specific collector. A later exporter can map runtime presence to a RuntimeWorker,
 sessions to AgentRun/Run, and lifecycle observations to RunEvent while adding tenant
 scope and policy at the platform boundary.
+
+## Agent identity and session context
+
+Mission Control presents organizational identity ahead of implementation runtime.
+An operator-owned `mission-control-identities.json` file maps exact session,
+workspace, profile, or runtime selectors to agent name, department, and role.
+See `../../identity-directory.example.json`.
+
+Named sessions may declare safe context using `DEPT/Agent: Outcome | Scope`.
+Only this strict template is parsed; arbitrary session titles are not exported.
+Declared identity is visibly weaker than an operator-configured mapping. See
+`../../session-title-convention.md` for team guidance.

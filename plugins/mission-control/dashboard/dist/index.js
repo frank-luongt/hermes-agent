@@ -109,19 +109,21 @@
   }
 
   function AgentNode({ agent, position, selected, onSelect }) {
-    const initials = RUNTIME_INITIALS[agent.runtime] || agent.label.slice(0, 2).toUpperCase();
+    const identityName = agent.agentName || agent.label;
+    const initials = identityName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+    const runtimeInitials = RUNTIME_INITIALS[agent.runtime] || agent.runtime.slice(0, 2).toUpperCase();
     return h("button", {
       type: "button",
       className: classNames("mc-agent-node", `mc-node-${agent.kind}`, `mc-node-state-${agent.state}`, selected && "is-selected"),
       style: { left: `${position.x}%`, top: `${position.y}%` },
       onClick: () => onSelect(agent.id),
       "aria-pressed": selected,
-      "aria-label": `${agent.label}, ${STATE_LABEL[agent.state] || agent.state}`,
+      "aria-label": `${identityName}, ${agent.department || "Unassigned"}, ${agent.runtime}, ${STATE_LABEL[agent.state] || agent.state}`,
     },
-      h("span", { className: "mc-agent-core" }, initials),
+      h("span", { className: "mc-agent-core" }, initials, h("span", { className: "mc-runtime-badge", title: agent.runtime }, runtimeInitials)),
       h(StateDot, { state: agent.state }),
-      h("span", { className: "mc-agent-name" }, agent.label),
-      h("span", { className: "mc-agent-runtime" }, agent.kind.replaceAll("-", " ")),
+      h("span", { className: "mc-agent-name" }, identityName),
+      h("span", { className: "mc-agent-runtime" }, `${agent.department || "Unassigned"} · ${agent.runtimeLabel || agent.runtime}`),
     );
   }
 
@@ -230,9 +232,9 @@
         alt: "",
         "aria-hidden": "true",
       }),
-      h("div", { className: "mc-orbit-label mc-ring-label-inner" }, "HERMES PROFILES"),
-      h("div", { className: "mc-orbit-label mc-ring-label-middle" }, "CLI WORKERS"),
-      h("div", { className: "mc-orbit-label mc-ring-label-outer" }, "PROVIDERS + ACP"),
+      h("div", { className: "mc-orbit-label mc-ring-label-inner" }, "ORGANIZATIONAL AGENTS"),
+      h("div", { className: "mc-orbit-label mc-ring-label-middle" }, "LOCAL AGENT SESSIONS"),
+      h("div", { className: "mc-orbit-label mc-ring-label-outer" }, "RUNTIME INFRASTRUCTURE"),
       agents.map((agent) => h(AgentNode, {
         key: agent.id,
         agent,
@@ -268,11 +270,11 @@
     const can = (name) => (agent.capabilities || []).includes(name);
     const configurePath = agent.kind === "provider" ? "/models" : agent.kind === "acp-client" ? "/docs" : "/config";
 
-    return h("aside", { className: "mc-inspector", "aria-label": `${agent.label} inspector` },
+    return h("aside", { className: "mc-inspector", "aria-label": `${agent.agentName || agent.label} inspector` },
       h("div", { className: "mc-inspector-head" },
         h("div", null,
-          h("div", { className: "mc-eyebrow" }, agent.kind.replaceAll("-", " ")),
-          h("h2", null, agent.label),
+          h("div", { className: "mc-eyebrow" }, `${agent.department || "Unassigned"} · ${agent.role || agent.kind.replaceAll("-", " ")}`),
+          h("h2", null, agent.agentName || agent.label),
         ),
         h("div", { className: classNames("mc-status-badge", `mc-status-${agent.state}`) },
           h(StateDot, { state: agent.state }), STATE_LABEL[agent.state] || agent.state,
@@ -280,7 +282,7 @@
       ),
       h("dl", { className: "mc-agent-facts" },
         h("div", null, h("dt", null, "Runtime"), h("dd", null, agent.runtime)),
-        h("div", null, h("dt", null, "Confidence"), h("dd", null, agent.healthConfidence)),
+        h("div", null, h("dt", null, "Identity"), h("dd", null, `${agent.identityStatus || "unassigned"} · ${agent.identityConfidence || "unsupported"}`)),
         h("div", null, h("dt", null, "Model"), h("dd", null, agent.model || "Not reported")),
         h("div", null, h("dt", null, "Last signal"), h("dd", null, relativeTime(agent.lastSeenAt))),
       ),
@@ -350,12 +352,13 @@
     );
   }
 
-  function SessionMonitor({ sessions, coverage }) {
+  function SessionMonitor({ sessions, coverage, identityDirectory }) {
     const rows = (sessions || []).slice(0, 18);
+    const named = (identityDirectory?.mapped || 0) + (identityDirectory?.declared || 0);
     return h("section", { className: "mc-sessions", "aria-label": "Local agent sessions" },
       h("div", { className: "mc-panel-heading" },
         h("div", null, h("div", { className: "mc-eyebrow" }, "LOCAL TELEMETRY HUB"), h("h2", null, "Agent sessions")),
-        h("span", { className: "mc-source-pill is-good" }, `${rows.length} recent`),
+        h("span", { className: classNames("mc-source-pill", named ? "is-good" : "is-warning") }, `${named} named · ${identityDirectory?.unassigned || 0} unassigned`),
       ),
       h("div", { className: "mc-runtime-coverage", "aria-label": "Runtime telemetry coverage" },
         (coverage || []).map((item) => h("span", {
@@ -370,23 +373,28 @@
               h("summary", null,
                 h("span", { className: "mc-session-runtime" }, RUNTIME_INITIALS[item.runtime] || item.runtime.slice(0, 2).toUpperCase()),
                 h("span", { className: "mc-session-main" },
-                  h("strong", null, item.title),
-                  h("small", null, `${item.runtime} · ${item.workspace || "workspace hidden"}`),
+                  h("strong", null, item.agentName || "Unassigned Agent"),
+                  h("small", null, `${item.department || "Unassigned"} · ${item.role || "Local agent session"}`),
+                  h("span", { className: "mc-session-work" }, item.currentWork || "Work title not declared"),
                 ),
                 h("span", { className: "mc-session-state" }, h(StateDot, { state: item.state }), item.state.replaceAll("_", " ")),
                 h("time", null, relativeTime(item.lastActivityAt || item.startedAt)),
               ),
               h("dl", { className: "mc-session-detail" },
-                h("div", null, h("dt", null, "Confidence"), h("dd", null, item.healthConfidence)),
+                h("div", null, h("dt", null, "Runtime"), h("dd", null, item.runtime)),
+                h("div", null, h("dt", null, "Identity"), h("dd", null, `${item.identityStatus} · ${item.identityConfidence}`)),
+                h("div", null, h("dt", null, "Telemetry"), h("dd", null, item.healthConfidence)),
                 h("div", null, h("dt", null, "Source"), h("dd", null, item.telemetrySource)),
-                h("div", null, h("dt", null, "Ownership"), h("dd", null, item.ownership)),
                 h("div", null, h("dt", null, "Model"), h("dd", null, item.model || "Not reported")),
+                h("div", null, h("dt", null, "Scope"), h("dd", null, item.scope || item.workspace || "Not declared")),
+                h("div", null, h("dt", null, "Work ref"), h("dd", null, item.workRef || "Not declared")),
               ),
               (item.risks || []).length > 0 && h("p", { className: "mc-session-risk" }, item.risks[0]),
             ),
           ))
         : h("div", { className: "mc-empty-feed" }, "No normalized local session metadata is available yet."),
       h("p", { className: "mc-session-boundary" }, "Read-only for foreign sessions. Prompts, transcript bodies, command lines, environment values, credentials, and absolute paths are excluded."),
+      h("p", { className: "mc-session-convention" }, "Team title convention: ENG/Atlas: Review auth boundaries | Customer Portal | KB-142. Work reference is optional; parsed identity is declared, not verified."),
     );
   }
 
@@ -583,7 +591,7 @@
         h("div", null,
           h("div", { className: "mc-eyebrow" }, "HERMES · LOCAL FLEET"),
           h("h1", null, "Mission Control"),
-          h("p", null, "One governed view across profiles, coding agents, providers, and Kanban outcomes."),
+          h("p", null, "Agent identity and department first; sessions, runtimes, and Kanban outcomes remain traceable."),
         ),
         h("div", { className: "mc-title-status" },
           h("span", null, snapshot.bridge.available ? "HOST BRIDGE" : "LIMITED TELEMETRY"),
@@ -608,7 +616,7 @@
           onReassign: () => setNotice("Choose the new owner from the Kanban task drawer; Mission Control keeps task ownership in Kanban."),
         }),
       ),
-      h(SessionMonitor, { sessions: snapshot.sessions, coverage: snapshot.runtimeCoverage }),
+      h(SessionMonitor, { sessions: snapshot.sessions, coverage: snapshot.runtimeCoverage, identityDirectory: snapshot.identityDirectory }),
       h(Telemetry, { events: snapshot.events, bridge: snapshot.bridge }),
       dispatchAgent && h(DispatchModal, {
         agent: dispatchAgent,

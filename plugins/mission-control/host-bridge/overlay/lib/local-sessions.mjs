@@ -29,6 +29,7 @@ export const LOCAL_RUNTIMES = Object.freeze([
 const ACTIVE_MS = 90_000;
 const IDLE_MS = 15 * 60_000;
 const RECENT_LIMIT = 25;
+const SESSION_TITLE_RE = /^([A-Z][A-Z0-9-]{1,11})\/([A-Za-z][A-Za-z0-9._ -]{1,39}): ([A-Za-z][A-Za-z0-9 .,_()&+\/-]{2,79})(?: \| ([A-Za-z0-9][A-Za-z0-9 ._\/-]{0,39}))?(?: \| ([A-Z][A-Z0-9-]{1,31}))?$/;
 
 function toMs(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -83,6 +84,20 @@ function runtimeLabel(runtime) {
   })[runtime] ?? runtime;
 }
 
+function parseSessionTitle(value) {
+  if (typeof value !== "string" || value.length > 180) return null;
+  const match = value.trim().match(SESSION_TITLE_RE);
+  if (!match) return null;
+  return {
+    departmentCode: match[1],
+    agentName: match[2].trim(),
+    workTitle: match[3].trim(),
+    scope: match[4]?.trim() ?? null,
+    workRef: match[5]?.trim() ?? null,
+    source: "session-title-v1",
+  };
+}
+
 function activityState(lastActivityAt, nowMs, { ended = false, failed = false, live = false, waiting = false } = {}) {
   if (failed) return "failed";
   if (ended) return "completed";
@@ -113,6 +128,10 @@ function session(runtime, nativeId, fields = {}) {
     ownership: fields.ownership === "mission-control" ? "mission-control" : "foreign",
     healthConfidence: fields.healthConfidence ?? "inferred",
     telemetrySource: fields.telemetrySource ?? "process",
+    declaredIdentity: fields.declaredIdentity ?? null,
+    currentWork: fields.currentWork ?? "Work title not declared",
+    scope: fields.scope ?? null,
+    workRef: fields.workRef ?? null,
     parentSessionId: fields.parentSessionId ? safeToken(String(fields.parentSessionId)) : null,
     metrics: {
       messages: Number.isFinite(fields.messages) ? Math.max(0, fields.messages) : null,
@@ -146,6 +165,7 @@ function rosterSessions(roster, nowMs) {
     rows.slice(0, RECENT_LIMIT).forEach((row, index) => {
       const nativeId = row.sessionId ?? (row.pid ? `pid-${row.pid}` : `recent-${index}`);
       const live = Boolean(row.pid || row.running);
+      const declared = parseSessionTitle(runtime === "claude" ? row.name : runtime === "opencode" ? row.title : null);
       out.push(session(runtime, nativeId, {
         state: activityState(row.lastActivityAt ?? row.startedAt, nowMs, { live }),
         model: row.model,
@@ -158,6 +178,10 @@ function rosterSessions(roster, nowMs) {
         costUsd: row.cost,
         inputTokens: row.tokens?.input,
         outputTokens: row.tokens?.output,
+        declaredIdentity: declared,
+        currentWork: declared?.workTitle,
+        scope: declared?.scope,
+        workRef: declared?.workRef,
       }));
     });
   }
@@ -453,4 +477,4 @@ export async function listLocalSessions({
   });
 }
 
-export const _test = { activityState, iso, safeWorkspace, session, runtimeSummaries, toMs };
+export const _test = { activityState, iso, parseSessionTitle, safeWorkspace, session, runtimeSummaries, toMs };

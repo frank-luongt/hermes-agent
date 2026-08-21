@@ -104,6 +104,8 @@ def test_missing_cli_telemetry_is_unknown_not_healthy(plugin):
     assert all(node["state"] == "unknown" for node in nodes)
     assert all(node["healthConfidence"] == "stale" for node in nodes)
     assert all(node["risks"] for node in nodes)
+    assert all(node["agentName"] == "Unassigned Agent" for node in nodes)
+    assert all(node["department"] == "Unassigned" for node in nodes)
 
 
 def test_pending_and_blocked_state_precedence(plugin):
@@ -147,6 +149,65 @@ def test_local_session_registry_drives_monitor_only_runtime_state(plugin):
     assert nodes["omnigent"]["sessionCount"] == 1
     assert "dispatch" not in nodes["omnigent"]["capabilities"]
     assert "omnigent-chat-db" in nodes["omnigent"]["telemetrySources"]
+
+
+def test_identity_directory_maps_exact_session_and_takes_precedence(plugin, monkeypatch, tmp_path):
+    directory = {
+        "version": "local-agent-identity/v1",
+        "agents": [{
+            "id": "agent:atlas", "name": "Atlas", "department": "Engineering",
+            "role": "Software Architect", "matches": {"sessionIds": ["codex:run-1"]},
+        }],
+    }
+    (tmp_path / plugin.IDENTITY_DIRECTORY_FILE).write_text(json.dumps(directory), encoding="utf-8")
+    monkeypatch.setattr(plugin, "get_hermes_home", lambda: tmp_path)
+    identities = plugin._load_identity_directory()
+    identity = plugin._resolve_identity({
+        "id": "codex:run-1", "nativeSessionId": "run-1", "runtime": "codex",
+        "declaredIdentity": {
+            "source": "session-title-v1", "departmentCode": "SRE", "agentName": "Different",
+        },
+    }, identities)
+    assert identity == {
+        "agentId": "agent:atlas", "agentName": "Atlas", "department": "Engineering",
+        "role": "Software Architect", "identityStatus": "mapped", "identityConfidence": "configured",
+    }
+
+
+def test_identity_directory_rejects_paths_and_secret_like_labels(plugin, monkeypatch, tmp_path):
+    directory = {"agents": [
+        {"id": "agent:bad-path", "name": "/Users/example/private", "matches": {"runtimes": ["codex"]}},
+        {"id": "agent:bad-key", "name": "sk-abcdefghijklmnopqrstuvwxyz", "matches": {"runtimes": ["claude"]}},
+    ]}
+    (tmp_path / plugin.IDENTITY_DIRECTORY_FILE).write_text(json.dumps(directory), encoding="utf-8")
+    monkeypatch.setattr(plugin, "get_hermes_home", lambda: tmp_path)
+    assert plugin._load_identity_directory() == []
+
+
+def test_governed_title_is_declared_not_verified(plugin):
+    identity = plugin._resolve_identity({
+        "id": "claude:run-2", "runtime": "claude",
+        "declaredIdentity": {
+            "source": "session-title-v1", "departmentCode": "SRE", "agentName": "Sentinel",
+        },
+    }, [])
+    assert identity["agentName"] == "Sentinel"
+    assert identity["department"] == "Site Reliability"
+    assert identity["identityStatus"] == "declared"
+    assert identity["identityConfidence"] == "declared"
+
+
+def test_session_enrichment_counts_mapped_declared_and_unassigned(plugin):
+    registry = {"sessions": [
+        {"id": "hermes:1", "runtime": "hermes"},
+        {"id": "claude:2", "runtime": "claude", "declaredIdentity": {
+            "source": "session-title-v1", "departmentCode": "ENG", "agentName": "Atlas",
+        }},
+        {"id": "codex:3", "runtime": "codex"},
+    ]}
+    enriched, counts = plugin._enrich_sessions(registry, [])
+    assert counts == {"mapped": 1, "declared": 1, "unassigned": 1, "configuredAgents": 0}
+    assert [row["identityStatus"] for row in enriched["sessions"]] == ["system", "declared", "unassigned"]
 
 
 def test_cursor_is_offline_when_no_acp_presence_file(plugin, monkeypatch, tmp_path):
@@ -215,6 +276,8 @@ def test_frontend_contains_required_accessibility_and_security_copy():
     assert "It cannot target foreign sessions" in source
     assert "LOCAL TELEMETRY HUB" in source
     assert "Prompts, transcript bodies, command lines" in source
+    assert "Team title convention" in source
+    assert "agent.department" in source
     assert "window.confirm" not in source
 
 
