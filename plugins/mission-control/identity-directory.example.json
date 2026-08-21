@@ -1,0 +1,26 @@
+{
+  "version": "local-agent-identity/v2",
+  "agents": [
+    {
+      "id": "faos:architect",
+      "name": "Kien Nguyen",
+      "department": "engineering",
+      "role": "Architect",
+      "job": "Review authentication boundaries",
+      "scope": "Customer Portal",
+      "workRef": "KB-142",
+      "matches": {
+        "sessionIds": ["codex:replace-with-session-id"]
+      }
+    },
+    {
+      "id": "faos:ciso",
+      "name": "Tuan Anh Nguyen",
+      "department": "company_hq",
+      "role": "Chief Information Security Officer",
+      "matches": {
+        "sessionIds": ["claude:replace-with-session-id"]
+      }
+    }
+  ]
+}

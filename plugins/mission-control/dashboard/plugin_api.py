@@ -18,6 +18,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import sqlite3
 import time
 import urllib.error
@@ -39,9 +40,38 @@ BRIDGE_URL = os.environ.get("HERMES_BRIDGE_URL", "http://host.docker.internal:31
 BRIDGE_TIMEOUT_SECONDS = 4.0
 ACTIVE_MISSION_STATUSES = {"awaiting_approval", "pending", "approved", "running"}
 TERMINAL_BRIDGE_STATUSES = {"done", "failed", "denied", "expired", "interrupted"}
-CLI_RUNTIMES = ("claude", "codex", "qwen", "gemini", "opencode")
-PROVIDER_RUNTIMES = ("deepseek", "grok")
+SPAWNABLE_CLI_RUNTIMES = ("claude", "codex", "qwen", "gemini", "opencode")
+CLI_RUNTIMES = SPAWNABLE_CLI_RUNTIMES + ("grok", "dsh", "omnigent", "faos")
+PROVIDER_RUNTIMES = ("deepseek",)
 SAFE_REPOS = ("Foundation-AgenticOS", "foundation-faos", "scratch")
+IDENTITY_DIRECTORY_VERSION = "local-agent-identity/v2"
+IDENTITY_DIRECTORY_FILE = "mission-control-identities.json"
+FAOSX_DEPARTMENTS = {
+    "company_hq": "Company HQ",
+    "wiki": "Wiki",
+    "operations": "Operations",
+    "strategy": "Strategy",
+    "finance": "Finance",
+    "products": "Products",
+    "engineering": "Engineering",
+    "projects": "Projects",
+    "sales_marketing": "Sales & Marketing",
+    "customer_support": "Customer Support",
+    "hr": "HR",
+    "legal": "Legal",
+    "investor_relations": "Investor Relations",
+}
+FAOSX_TEAM_NAMES = {
+    department_id: f"FAOSX {department_name}"
+    for department_id, department_name in FAOSX_DEPARTMENTS.items()
+}
+LEGACY_DEPARTMENT_CODES = {
+    "ENG": "engineering", "SRE": "engineering", "PROD": "products",
+    "RES": "strategy", "OPS": "operations", "GTM": "sales_marketing",
+    "FIN": "finance", "EXEC": "company_hq", "LEGAL": "legal",
+    "CS": "customer_support", "HR": "hr",
+}
+SENSITIVE_IDENTITY_VALUE = re.compile(r"(?:\bBearer\b|\bsk-[A-Za-z0-9_-]{12,}|\bghp_[A-Za-z0-9]{12,}|\bgithub_pat_|\bAKIA[A-Z0-9]{12,})", re.IGNORECASE)
 
 
 def _now() -> int:
@@ -68,6 +98,144 @@ def _read_dotenv_value(path: Path, key: str) -> str:
             value = value[1:-1]
         return value
     return ""
+
+
+def _identity_text(value: Any, fallback: str, limit: int = 80) -> str:
+    if not isinstance(value, str):
+        return fallback
+    cleaned = " ".join(value.replace("\x00", "").split()).strip()
+    if cleaned.startswith(("/", "~/")) or ":\\" in cleaned or SENSITIVE_IDENTITY_VALUE.search(cleaned):
+        return fallback
+    return cleaned[:limit] or fallback
+
+
+def _department(value: Any) -> tuple[str, str]:
+    """Normalize identity input to the canonical FAOSX business structure."""
+    raw = _identity_text(value, "", 80)
+    candidate = raw.lower().replace("&", "and").replace("-", "_").replace(" ", "_")
+    aliases = {
+        **{key.lower(): key for key in FAOSX_DEPARTMENTS},
+        **{label.lower().replace("&", "and").replace(" ", "_"): key for key, label in FAOSX_DEPARTMENTS.items()},
+        **{code.lower(): key for code, key in LEGACY_DEPARTMENT_CODES.items()},
+        "product": "products", "growth": "sales_marketing", "customer_success": "customer_support",
+        "people_operations": "hr", "legal_and_compliance": "legal", "executive": "company_hq",
+        "agent_operations": "operations", "model_infrastructure": "engineering",
+    }
+    department_id = aliases.get(candidate)
+    if not department_id:
+        return "unassigned", "Unassigned"
+    return department_id, FAOSX_DEPARTMENTS[department_id]
+
+
+def _team_name(department_id: str) -> str:
+    return FAOSX_TEAM_NAMES.get(department_id, "FAOSX Unassigned")
+
+
+def _load_identity_directory() -> list[dict[str, Any]]:
+    """Load an operator-owned, local-only identity mapping.
+
+    Selectors are exact strings. Regex and paths are intentionally unsupported,
+    which keeps the mapping deterministic and prevents config from becoming a
+    data-exfiltration surface.
+    """
+    path = get_hermes_home() / IDENTITY_DIRECTORY_FILE
+    try:
+        if path.stat().st_size > 256_000:
+            raise ValueError("identity directory exceeds 256 KB")
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return []
+    identities = []
+    for item in list(raw.get("agents") or [])[:100] if isinstance(raw, dict) else []:
+        if not isinstance(item, dict):
+            continue
+        matches = item.get("matches") if isinstance(item.get("matches"), dict) else {}
+        identity_id = _identity_text(item.get("id"), "", 120)
+        name = _identity_text(item.get("name"), "", 80)
+        if not identity_id or not name:
+            continue
+        department_id, department = _department(item.get("departmentId") or item.get("department"))
+        identities.append({
+            "agentId": identity_id,
+            "agentName": name,
+            "departmentId": department_id,
+            "department": department,
+            "teamName": _team_name(department_id),
+            "role": _identity_text(item.get("role"), "Agent", 100),
+            "job": _identity_text(item.get("job"), "", 120),
+            "scope": _identity_text(item.get("scope"), "", 80),
+            "workRef": _identity_text(item.get("workRef"), "", 40),
+            "matches": {
+                key: {_identity_text(value, "", 160) for value in values if _identity_text(value, "", 160)}
+                for key, values in matches.items()
+                if key in {"sessionIds", "runtimes", "workspaces", "profiles"} and isinstance(values, list)
+            },
+        })
+    return identities
+
+
+def _resolve_identity(session: dict[str, Any], identities: list[dict[str, Any]]) -> dict[str, Any]:
+    values = {
+        "sessionIds": {str(session.get("id") or ""), str(session.get("nativeSessionId") or "")},
+        "runtimes": {str(session.get("runtime") or "")},
+        "workspaces": {str(session.get("workspace") or "")},
+        "profiles": {str(session.get("profile") or "")},
+    }
+    ranked = []
+    weights = {"sessionIds": 100, "profiles": 80, "workspaces": 40, "runtimes": 10}
+    for identity in identities:
+        selectors = identity.get("matches") or {}
+        if not selectors or any(not (set(expected) & values[key]) for key, expected in selectors.items()):
+            continue
+        ranked.append((sum(weights[key] for key in selectors), identity))
+    if ranked:
+        identity = max(ranked, key=lambda row: row[0])[1]
+        return {key: identity[key] for key in ("agentId", "agentName", "departmentId", "department", "teamName", "role")} | {
+            "identityStatus": "mapped", "identityConfidence": "configured",
+            "currentWork": identity.get("job") or session.get("currentWork") or "Work title not declared",
+            "scope": identity.get("scope") or session.get("scope"),
+            "workRef": identity.get("workRef") or session.get("workRef"),
+        }
+    declared = session.get("declaredIdentity") if isinstance(session.get("declaredIdentity"), dict) else None
+    if declared and declared.get("source") in {"session-title-v1", "session-title-v2"}:
+        agent_name = _identity_text(declared.get("agentName"), "Unassigned Agent", 80)
+        department_id, department = _department(declared.get("departmentId") or declared.get("departmentCode"))
+        digest = hashlib.sha256(f"{department_id}:{agent_name}".encode()).hexdigest()[:10]
+        return {
+            "agentId": f"declared:{department_id}:{digest}", "agentName": agent_name,
+            "departmentId": department_id, "department": department,
+            "teamName": _team_name(department_id), "role": "Declared session owner",
+            "identityStatus": "declared", "identityConfidence": "declared",
+        }
+    if session.get("runtime") == "hermes":
+        return {
+            "agentId": "hermes:default", "agentName": "Hermes",
+            "departmentId": "operations", "department": "Operations",
+            "teamName": _team_name("operations"),
+            "role": "Orchestrator", "identityStatus": "system", "identityConfidence": "direct",
+        }
+    return {
+        "agentId": None, "agentName": "Unassigned Agent",
+        "departmentId": "unassigned", "department": "Unassigned",
+        "teamName": _team_name("unassigned"),
+        "role": "Local agent session", "identityStatus": "unassigned", "identityConfidence": "unsupported",
+    }
+
+
+def _enrich_sessions(registry: dict[str, Any], identities: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, int]]:
+    sessions = []
+    for row in registry.get("sessions", []):
+        if not isinstance(row, dict):
+            continue
+        sessions.append({**row, **_resolve_identity(row, identities)})
+    mapped = sum(1 for row in sessions if row["identityStatus"] == "mapped")
+    declared = sum(1 for row in sessions if row["identityStatus"] == "declared")
+    system = sum(1 for row in sessions if row["identityStatus"] == "system")
+    return {**registry, "sessions": sessions}, {
+        "mapped": mapped, "declared": declared, "system": system,
+        "unassigned": len(sessions) - mapped - declared - system,
+        "configuredAgents": len(identities),
+    }
 
 
 def _bridge_token() -> str:
@@ -254,7 +422,21 @@ def _task_prompt(task: Any) -> str:
     return prompt[:8000]
 
 
-def _profile_nodes(tasks: list[Any]) -> list[dict[str, Any]]:
+def _profile_identity(name: str, identities: list[dict[str, Any]]) -> dict[str, Any]:
+    resolved = _resolve_identity({"runtime": "hermes", "profile": name}, identities)
+    if resolved["identityStatus"] == "mapped":
+        return resolved
+    if name == "default":
+        return resolved
+    return {
+        "agentId": f"hermes:{name}", "agentName": name,
+        "departmentId": "operations", "department": "Operations", "teamName": _team_name("operations"),
+        "role": "Hermes Profile", "identityStatus": "profile", "identityConfidence": "direct",
+    }
+
+
+def _profile_nodes(tasks: list[Any], identities: Optional[list[dict[str, Any]]] = None) -> list[dict[str, Any]]:
+    identities = identities or []
     try:
         from hermes_cli import profiles as profiles_mod
         profiles = profiles_mod.list_profiles()
@@ -273,6 +455,7 @@ def _profile_nodes(tasks: list[Any]) -> list[dict[str, Any]]:
         provider = raw.get("provider")
         model = raw.get("model")
         gateway_running = bool(raw.get("gateway_running"))
+        identity = _profile_identity(name, identities)
         task = task_by_assignee.get(name)
         state = "working" if task and task.status == "running" else "blocked" if task and task.status == "blocked" else "online" if gateway_running else "unknown"
         risks = []
@@ -280,7 +463,10 @@ def _profile_nodes(tasks: list[Any]) -> list[dict[str, Any]]:
             risks.append({"severity": "info", "message": "Gateway presence is not directly observed for this profile."})
         nodes.append({
             "id": f"hermes:{name}",
-            "label": "Hermes" if name == "default" else name,
+            "label": identity["agentName"], "agentName": identity["agentName"],
+            "departmentId": identity["departmentId"], "department": identity["department"],
+            "teamName": identity["teamName"], "role": identity["role"],
+            "identityStatus": identity["identityStatus"], "identityConfidence": identity["identityConfidence"],
             "kind": "hermes-profile",
             "runtime": "hermes",
             "state": state,
@@ -295,7 +481,11 @@ def _profile_nodes(tasks: list[Any]) -> list[dict[str, Any]]:
         })
     if not nodes:
         nodes.append({
-            "id": "hermes:default", "label": "Hermes", "kind": "hermes-profile", "runtime": "hermes",
+            "id": "hermes:default", "label": "Hermes", "agentName": "Hermes",
+            "departmentId": "operations", "department": "Operations",
+            "teamName": _team_name("operations"), "role": "Orchestrator",
+            "identityStatus": "system", "identityConfidence": "direct",
+            "kind": "hermes-profile", "runtime": "hermes",
             "state": "unknown", "healthConfidence": "unsupported",
             "capabilities": ["observe", "dispatch", "reassign"], "currentTask": None,
             "provider": None, "model": None, "lastSeenAt": None,
@@ -332,7 +522,10 @@ def _subagent_nodes() -> list[dict[str, Any]]:
         return []
     return [{
         "id": f"hermes-subagent:{row['id']}",
-        "label": f"Delegate {str(row['id'])[:6]}",
+        "label": f"Delegate {str(row['id'])[:6]}", "agentName": f"Delegate {str(row['id'])[:6]}",
+        "departmentId": "operations", "department": "Operations",
+        "teamName": _team_name("operations"), "role": "Delegated Subagent",
+        "identityStatus": "system", "identityConfidence": "direct",
         "kind": "hermes-subagent",
         "runtime": "hermes",
         "state": "working",
@@ -352,7 +545,7 @@ def _runtime_rows(roster: dict, runtime: str) -> list[dict]:
     return list(section.get("rows") or [])
 
 
-def _cli_nodes(roster: dict, pending: list[dict], blocked: list[dict], tool_names: set[str], tasks: list[Any]) -> list[dict[str, Any]]:
+def _cli_nodes(roster: dict, registry: dict, pending: list[dict], blocked: list[dict], tool_names: set[str], tasks: list[Any]) -> list[dict[str, Any]]:
     nodes = []
     pending_by_runtime: dict[str, list] = {name: [] for name in CLI_RUNTIMES}
     for item in pending:
@@ -372,10 +565,15 @@ def _cli_nodes(roster: dict, pending: list[dict], blocked: list[dict], tool_name
     }
 
     for runtime in CLI_RUNTIMES:
-        rows = _runtime_rows(roster, runtime)
-        live = [r for r in rows if r.get("pid") or r.get("running")]
-        state = "waiting_approval" if pending_by_runtime[runtime] else "blocked" if blocked_by_runtime[runtime] else "working" if live else "online" if rows else "unknown"
-        latest = max((r.get("lastActivityAt") or 0 for r in rows), default=0)
+        sessions = [row for row in registry.get("sessions", []) if row.get("runtime") == runtime]
+        rows = sessions or _runtime_rows(roster, runtime)
+        summary = next((item for item in registry.get("runtimes", []) if item.get("runtime") == runtime), {})
+        live = [r for r in rows if r.get("pid") or r.get("running") or r.get("state") in {"working", "waiting_approval", "blocked"}]
+        observed_state = str(summary.get("state") or "")
+        state = "waiting_approval" if pending_by_runtime[runtime] else "blocked" if blocked_by_runtime[runtime] else "working" if live else "degraded" if observed_state == "degraded" else "online" if rows else "offline" if observed_state == "offline" else "unknown"
+        latest_values = [r.get("lastActivityAt") or r.get("startedAt") for r in rows]
+        latest_iso = max((value for value in latest_values if isinstance(value, str)), default=None)
+        latest_epoch = max((value for value in latest_values if isinstance(value, (int, float))), default=0)
         spawn_tool = f"spawn_{runtime}_task"
         capabilities = ["observe", "logs", "cost"]
         if spawn_tool in tool_names:
@@ -383,19 +581,39 @@ def _cli_nodes(roster: dict, pending: list[dict], blocked: list[dict], tool_name
         if "run_message" in tool_names:
             capabilities.append("message")
         risks = []
+        named = {(row.get("agentId"), row.get("agentName"), row.get("departmentId"), row.get("department"), row.get("teamName"), row.get("role"), row.get("identityStatus"), row.get("identityConfidence")) for row in sessions if row.get("agentId")}
+        if len(named) == 1:
+            agent_id, agent_name, department_id, department, team_name, role, identity_status, identity_confidence = next(iter(named))
+        elif len(named) > 1:
+            agent_id, agent_name, department_id, department, team_name, role, identity_status, identity_confidence = (
+                None, f"{len(named)} Local Agents", "multiple", "Multiple departments",
+                "Multiple FAOSX teams", "Shared runtime lane", "multiple", "mixed",
+            )
+        else:
+            agent_id, agent_name, department_id, department, team_name, role, identity_status, identity_confidence = (
+                None, "Unassigned Agent", "unassigned", "Unassigned",
+                _team_name("unassigned"), "Local agent session", "unassigned", "unsupported",
+            )
         if not rows:
-            risks.append({"severity": "info", "message": "No recent session telemetry; runtime readiness is unknown."})
+            risks.append({"severity": "warning" if observed_state == "degraded" else "info", "message": summary.get("message") or "No recent session telemetry; runtime readiness is unknown."})
         if pending_by_runtime[runtime]:
             risks.append({"severity": "warning", "message": f"{len(pending_by_runtime[runtime])} request(s) await host approval."})
         if blocked_by_runtime[runtime]:
             risks.append({"severity": "critical", "message": f"{len(blocked_by_runtime[runtime])} session(s) may be blocked."})
+        if sessions and not named:
+            risks.append({"severity": "info", "message": f"{len(sessions)} session(s) need an agent identity mapping or governed title."})
         nodes.append({
-            "id": f"cli:{runtime}", "label": runtime.capitalize() if runtime != "opencode" else "OpenCode",
+            "id": f"cli:{runtime}", "label": agent_name, "agentName": agent_name,
+            "departmentId": department_id, "department": department, "teamName": team_name,
+            "role": role, "identityStatus": identity_status,
+            "identityConfidence": identity_confidence, "identityAgentId": agent_id,
+            "runtimeLabel": {"opencode": "OpenCode", "omnigent": "Omnigent", "faos": "FAOS", "dsh": "Dsh"}.get(runtime, runtime.capitalize()),
             "kind": "cli-worker", "runtime": runtime, "state": state,
-            "healthConfidence": "direct" if rows else "stale",
+            "healthConfidence": summary.get("healthConfidence") or ("direct" if rows else "stale"),
             "capabilities": capabilities, "currentTask": _task_public(task_by_assignee[runtime]) if runtime in task_by_assignee else None,
-            "provider": None, "model": None, "lastSeenAt": _iso(latest / 1000 if latest > 10_000_000_000 else latest),
-            "risks": risks, "telemetrySources": ["host-bridge", "kanban"],
+            "provider": None, "model": next((row.get("model") for row in rows if row.get("model")), None),
+            "lastSeenAt": latest_iso or _iso(latest_epoch / 1000 if latest_epoch > 10_000_000_000 else latest_epoch),
+            "risks": risks, "telemetrySources": sorted({"host-bridge", "kanban", *(str(row.get("telemetrySource")) for row in sessions if row.get("telemetrySource"))}),
             "sessionCount": len(rows),
         })
     return nodes
@@ -417,6 +635,9 @@ def _provider_nodes(profile_nodes: list[dict]) -> list[dict[str, Any]]:
             capabilities.append("dispatch")
         out.append({
             "id": f"provider:{runtime}", "label": "Grok" if runtime == "grok" else "DeepSeek",
+            "agentName": "DeepSeek Backend", "departmentId": "engineering",
+            "department": "Engineering", "teamName": _team_name("engineering"), "role": "Provider Backend",
+            "identityStatus": "infrastructure", "identityConfidence": "direct",
             "kind": "provider", "runtime": runtime,
             "state": "working" if any(n["state"] == "working" for n in matching) else "online" if configured else "offline",
             "healthConfidence": "inferred" if configured else "unsupported",
@@ -432,7 +653,7 @@ def _provider_nodes(profile_nodes: list[dict]) -> list[dict[str, Any]]:
     return out
 
 
-def _cursor_node() -> dict[str, Any]:
+def _cursor_node(registry: Optional[dict] = None) -> dict[str, Any]:
     marker = get_hermes_home() / "workspace" / "bridge" / "acp-clients.json"
     clients: list[dict] = []
     try:
@@ -441,31 +662,53 @@ def _cursor_node() -> dict[str, Any]:
     except (OSError, json.JSONDecodeError, AttributeError):
         pass
     active = [c for c in clients if c.get("connected")]
+    local_sessions = [row for row in (registry or {}).get("sessions", []) if row.get("runtime") == "cursor"]
+    local_summary = next((row for row in (registry or {}).get("runtimes", []) if row.get("runtime") == "cursor"), {})
+    last_local = max((row.get("lastActivityAt") for row in local_sessions if row.get("lastActivityAt")), default=None)
+    named = {(row.get("agentId"), row.get("agentName"), row.get("departmentId"), row.get("department"), row.get("teamName"), row.get("role"), row.get("identityStatus"), row.get("identityConfidence")) for row in local_sessions if row.get("agentId")}
+    if len(named) == 1:
+        identity_agent_id, agent_name, department_id, department, team_name, role, identity_status, identity_confidence = next(iter(named))
+    elif len(named) > 1:
+        identity_agent_id, agent_name, department_id, department, team_name, role, identity_status, identity_confidence = (
+            None, f"{len(named)} Local Agents", "multiple", "Multiple departments",
+            "Multiple FAOSX teams", "Cursor sessions", "multiple", "mixed",
+        )
+    else:
+        identity_agent_id, agent_name, department_id, department, team_name, role, identity_status, identity_confidence = (
+            None, "Unassigned Agent", "unassigned", "Unassigned",
+            _team_name("unassigned"), "Cursor session", "unassigned", "unsupported",
+        )
     return {
-        "id": "acp:cursor", "label": "Cursor", "kind": "acp-client", "runtime": "cursor",
-        "state": "online" if active else "offline",
-        "healthConfidence": "direct" if marker.exists() else "unsupported",
+        "id": "acp:cursor", "label": agent_name, "agentName": agent_name,
+        "departmentId": department_id, "department": department, "teamName": team_name,
+        "role": role, "identityStatus": identity_status,
+        "identityConfidence": identity_confidence, "identityAgentId": identity_agent_id,
+        "runtimeLabel": "Cursor", "kind": "acp-client", "runtime": "cursor",
+        "state": "online" if active else "working" if any(row.get("state") == "working" for row in local_sessions) else "unknown" if local_sessions else "offline",
+        "healthConfidence": "direct" if marker.exists() else local_summary.get("healthConfidence", "unsupported"),
         "capabilities": ["observe", "configure"], "currentTask": None,
         "provider": None, "model": None,
-        "lastSeenAt": max((c.get("lastSeenAt") for c in clients if c.get("lastSeenAt")), default=None),
-        "risks": [] if active else [{"severity": "info", "message": "No Cursor ACP client is connected; process spawning is intentionally unavailable."}],
-        "telemetrySources": ["acp-presence"], "sessionCount": len(active),
+        "lastSeenAt": max([value for value in [last_local, *(c.get("lastSeenAt") for c in clients)] if value], default=None),
+        "risks": [] if active else [{"severity": "info", "message": "No Cursor ACP client is connected; local activity may be inferred and process spawning is intentionally unavailable."}],
+        "telemetrySources": ["acp-presence", "host-bridge"], "sessionCount": len(local_sessions) or len(active),
     }
 
 
-def _bridge_snapshot() -> tuple[dict, list[dict], list[dict], set[str], Optional[str]]:
+def _bridge_snapshot() -> tuple[dict, dict, list[dict], list[dict], set[str], Optional[str]]:
     client = BridgeClient()
     if not client.configured:
-        return {}, [], [], set(), "Host bridge credentials are not available inside Hermes."
+        return {}, {}, [], [], set(), "Host bridge credentials are not available inside Hermes."
     try:
         tools = client.list_tools()
+        tool_names = {str(t.get("name")) for t in tools}
         roster = client.call("agents_list")
+        registry = client.call("sessions_list", {"limit": 160}) if "sessions_list" in tool_names else {}
         pending = (client.call("pending_approvals") or {}).get("pending") or []
         blocked_result = client.call("blocked_list") or {}
         blocked = blocked_result.get("blocked") or []
-        return roster or {}, pending, blocked, {str(t.get("name")) for t in tools}, None
+        return roster or {}, registry or {}, pending, blocked, tool_names, None
     except BridgeError as exc:
-        return {}, [], [], set(), str(exc)
+        return {}, {}, [], [], set(), str(exc)
 
 
 def _normalize_bridge_status(value: Any) -> str:
@@ -555,9 +798,11 @@ def build_snapshot(board: Optional[str] = None) -> dict[str, Any]:
     finally:
         kb.close()
 
-    roster, pending, blocked, tool_names, bridge_error = _bridge_snapshot()
-    profiles = _profile_nodes(tasks)
-    agents = profiles + _subagent_nodes() + _cli_nodes(roster, pending, blocked, tool_names, tasks) + _provider_nodes(profiles) + [_cursor_node()]
+    roster, registry, pending, blocked, tool_names, bridge_error = _bridge_snapshot()
+    identities = _load_identity_directory()
+    registry, identity_counts = _enrich_sessions(registry, identities)
+    profiles = _profile_nodes(tasks, identities)
+    agents = profiles + _subagent_nodes() + _cli_nodes(roster, registry, pending, blocked, tool_names, tasks) + _provider_nodes(profiles) + [_cursor_node(registry)]
 
     mission = _mission_conn()
     try:
@@ -580,6 +825,15 @@ def build_snapshot(board: Optional[str] = None) -> dict[str, Any]:
         "currentBoard": current,
         "boards": boards,
         "agents": agents,
+        "sessionContract": registry.get("contractVersion", "local-agent-session/v1"),
+        "sessionWindowDays": registry.get("windowDays"),
+        "sessions": registry.get("sessions", []),
+        "runtimeCoverage": registry.get("runtimes", []),
+        "identityDirectory": {
+            "contractVersion": IDENTITY_DIRECTORY_VERSION,
+            "configured": bool(identities),
+            **identity_counts,
+        },
         "tasks": [_task_public(t) for t in ready_tasks[:100]],
         "runs": [_public_run(r) for r in run_rows],
         "events": [{
@@ -677,7 +931,7 @@ def dispatch_task(task_id: str, payload: DispatchBody, board: Optional[str] = Qu
         if not agent_id.startswith("cli:"):
             raise HTTPException(status_code=409, detail="this agent type cannot be spawned")
         runtime = agent_id.split(":", 1)[1]
-        if runtime not in CLI_RUNTIMES:
+        if runtime not in SPAWNABLE_CLI_RUNTIMES:
             raise HTTPException(status_code=400, detail="unknown CLI runtime")
         client = BridgeClient()
         tool = f"spawn_{runtime}_task"
@@ -775,7 +1029,7 @@ def reassign_task(task_id: str, payload: ReassignBody, board: Optional[str] = Qu
             assignee = payload.agent_id.split(":", 1)[1]
         elif payload.agent_id.startswith("cli:"):
             runtime = payload.agent_id.split(":", 1)[1]
-            if runtime not in CLI_RUNTIMES:
+            if runtime not in SPAWNABLE_CLI_RUNTIMES:
                 raise HTTPException(status_code=400, detail="unknown CLI runtime")
             assignee = f"ext:{runtime}"
         else:

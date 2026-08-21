@@ -99,18 +99,20 @@ def test_websocket_auth_fails_closed_without_server_token(plugin, monkeypatch):
 
 
 def test_missing_cli_telemetry_is_unknown_not_healthy(plugin):
-    nodes = plugin._cli_nodes({}, [], [], set(), [])
+    nodes = plugin._cli_nodes({}, {}, [], [], set(), [])
     assert {node["runtime"] for node in nodes} == set(plugin.CLI_RUNTIMES)
     assert all(node["state"] == "unknown" for node in nodes)
     assert all(node["healthConfidence"] == "stale" for node in nodes)
     assert all(node["risks"] for node in nodes)
+    assert all(node["agentName"] == "Unassigned Agent" for node in nodes)
+    assert all(node["department"] == "Unassigned" for node in nodes)
 
 
 def test_pending_and_blocked_state_precedence(plugin):
     roster = {"codex": {"rows": [{"pid": 123, "lastActivityAt": 1000}]}}
     pending = [{"tool": "spawn_codex_task"}]
     blocked = [{"agent": "claude"}]
-    nodes = {node["runtime"]: node for node in plugin._cli_nodes(roster, pending, blocked, {"spawn_codex_task"}, [])}
+    nodes = {node["runtime"]: node for node in plugin._cli_nodes(roster, {}, pending, blocked, {"spawn_codex_task"}, [])}
     assert nodes["codex"]["state"] == "waiting_approval"
     assert nodes["claude"]["state"] == "blocked"
     assert "dispatch" in nodes["codex"]["capabilities"]
@@ -126,7 +128,112 @@ def test_provider_dispatch_is_capability_gated_by_matching_profile(plugin, monke
     nodes = {node["runtime"]: node for node in plugin._provider_nodes([profile])}
     assert "dispatch" in nodes["deepseek"]["capabilities"]
     assert nodes["deepseek"]["matchingProfiles"] == ["hermes:researcher"]
-    assert "dispatch" not in nodes["grok"]["capabilities"]
+    assert set(nodes) == {"deepseek"}
+
+
+def test_local_session_registry_drives_monitor_only_runtime_state(plugin):
+    registry = {
+        "sessions": [{
+            "id": "omnigent:run-1", "runtime": "omnigent", "state": "working",
+            "lastActivityAt": "2026-08-21T04:00:00Z", "model": None,
+            "telemetrySource": "omnigent-chat-db",
+        }],
+        "runtimes": [{
+            "runtime": "omnigent", "state": "working", "healthConfidence": "direct",
+            "message": "1 local session observed.",
+        }],
+    }
+    nodes = {node["runtime"]: node for node in plugin._cli_nodes({}, registry, [], [], set(), [])}
+    assert nodes["omnigent"]["state"] == "working"
+    assert nodes["omnigent"]["healthConfidence"] == "direct"
+    assert nodes["omnigent"]["sessionCount"] == 1
+    assert "dispatch" not in nodes["omnigent"]["capabilities"]
+    assert "omnigent-chat-db" in nodes["omnigent"]["telemetrySources"]
+
+
+def test_identity_directory_maps_exact_session_and_takes_precedence(plugin, monkeypatch, tmp_path):
+    directory = {
+        "version": "local-agent-identity/v2",
+        "agents": [{
+            "id": "agent:atlas", "name": "Atlas", "department": "engineering",
+            "role": "Software Architect", "job": "Review auth boundaries",
+            "scope": "Customer Portal", "workRef": "KB-142",
+            "matches": {"sessionIds": ["codex:run-1"]},
+        }],
+    }
+    (tmp_path / plugin.IDENTITY_DIRECTORY_FILE).write_text(json.dumps(directory), encoding="utf-8")
+    monkeypatch.setattr(plugin, "get_hermes_home", lambda: tmp_path)
+    identities = plugin._load_identity_directory()
+    identity = plugin._resolve_identity({
+        "id": "codex:run-1", "nativeSessionId": "run-1", "runtime": "codex",
+        "declaredIdentity": {
+            "source": "session-title-v1", "departmentCode": "SRE", "agentName": "Different",
+        },
+    }, identities)
+    assert identity == {
+        "agentId": "agent:atlas", "agentName": "Atlas",
+        "departmentId": "engineering", "department": "Engineering",
+        "teamName": "FAOSX Engineering",
+        "role": "Software Architect", "identityStatus": "mapped", "identityConfidence": "configured",
+        "currentWork": "Review auth boundaries", "scope": "Customer Portal", "workRef": "KB-142",
+    }
+
+
+def test_identity_directory_rejects_paths_and_secret_like_labels(plugin, monkeypatch, tmp_path):
+    directory = {"agents": [
+        {"id": "agent:bad-path", "name": "/Users/example/private", "matches": {"runtimes": ["codex"]}},
+        {"id": "agent:bad-key", "name": "sk-abcdefghijklmnopqrstuvwxyz", "matches": {"runtimes": ["claude"]}},
+    ]}
+    (tmp_path / plugin.IDENTITY_DIRECTORY_FILE).write_text(json.dumps(directory), encoding="utf-8")
+    monkeypatch.setattr(plugin, "get_hermes_home", lambda: tmp_path)
+    assert plugin._load_identity_directory() == []
+
+
+def test_governed_title_is_declared_not_verified(plugin):
+    identity = plugin._resolve_identity({
+        "id": "claude:run-2", "runtime": "claude",
+        "declaredIdentity": {
+            "source": "session-title-v1", "departmentCode": "SRE", "agentName": "Sentinel",
+        },
+    }, [])
+    assert identity["agentName"] == "Sentinel"
+    assert identity["departmentId"] == "engineering"
+    assert identity["department"] == "Engineering"
+    assert identity["teamName"] == "FAOSX Engineering"
+    assert identity["identityStatus"] == "declared"
+    assert identity["identityConfidence"] == "declared"
+
+
+def test_session_enrichment_counts_mapped_declared_and_unassigned(plugin):
+    registry = {"sessions": [
+        {"id": "hermes:1", "runtime": "hermes"},
+        {"id": "claude:2", "runtime": "claude", "declaredIdentity": {
+            "source": "session-title-v1", "departmentCode": "ENG", "agentName": "Atlas",
+        }},
+        {"id": "codex:3", "runtime": "codex"},
+    ]}
+    enriched, counts = plugin._enrich_sessions(registry, [])
+    assert counts == {"mapped": 0, "declared": 1, "system": 1, "unassigned": 1, "configuredAgents": 0}
+    assert [row["identityStatus"] for row in enriched["sessions"]] == ["system", "declared", "unassigned"]
+
+
+def test_canonical_faosx_department_title_is_normalized(plugin):
+    identity = plugin._resolve_identity({
+        "id": "claude:run-4", "runtime": "claude",
+        "declaredIdentity": {
+            "source": "session-title-v2", "departmentId": "sales_marketing", "agentName": "Beacon",
+        },
+    }, [])
+    assert identity["departmentId"] == "sales_marketing"
+    assert identity["department"] == "Sales & Marketing"
+    assert identity["teamName"] == "FAOSX Sales & Marketing"
+    assert identity["identityStatus"] == "declared"
+
+
+def test_all_faosx_departments_have_a_team_name(plugin):
+    assert set(plugin.FAOSX_TEAM_NAMES) == set(plugin.FAOSX_DEPARTMENTS)
+    assert plugin._team_name("products") == "FAOSX Products"
+    assert plugin._team_name("unknown") == "FAOSX Unassigned"
 
 
 def test_cursor_is_offline_when_no_acp_presence_file(plugin, monkeypatch, tmp_path):
@@ -193,6 +300,11 @@ def test_frontend_contains_required_accessibility_and_security_copy():
     assert '"aria-modal"' in source
     assert "Host approval required" in source
     assert "It cannot target foreign sessions" in source
+    assert "LOCAL TELEMETRY HUB" in source
+    assert "Prompts, transcript bodies, command lines" in source
+    assert "Team title convention" in source
+    assert "agent.department" in source
+    assert "agent.teamName" in source
     assert "window.confirm" not in source
 
 

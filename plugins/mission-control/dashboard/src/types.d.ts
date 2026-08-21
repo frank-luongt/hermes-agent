@@ -14,7 +14,10 @@ export type Runtime =
   | "opencode"
   | "deepseek"
   | "grok"
-  | "cursor";
+  | "cursor"
+  | "dsh"
+  | "omnigent"
+  | "faos";
 
 export type AgentState =
   | "online"
@@ -28,6 +31,13 @@ export type AgentState =
 export interface AgentNode {
   id: string;
   label: string;
+  agentName: string;
+  departmentId: string;
+  department: string;
+  teamName: string;
+  role: string;
+  identityStatus: "mapped" | "declared" | "system" | "profile" | "multiple" | "unassigned" | "infrastructure";
+  identityConfidence: "configured" | "declared" | "direct" | "mixed" | "unsupported";
   kind: AgentKind;
   runtime: Runtime;
   state: AgentState;
@@ -39,4 +49,33 @@ export interface AgentNode {
   lastSeenAt: string | null;
   risks: Array<{ severity: "info" | "warning" | "critical"; message: string }>;
   telemetrySources: string[];
+}
+
+export interface LocalAgentSession {
+  id: string;
+  runtime: Runtime;
+  nativeSessionId: string;
+  state: "working" | "idle" | "waiting_approval" | "blocked" | "completed" | "failed" | "interrupted" | "stale" | "unknown";
+  title: string;
+  model: string | null;
+  workspace: string | null;
+  startedAt: string | null;
+  lastActivityAt: string | null;
+  endedAt: string | null;
+  pid: number | null;
+  ownership: "mission-control" | "foreign";
+  healthConfidence: "direct" | "inferred" | "stale" | "unsupported";
+  telemetrySource: string;
+  risks: string[];
+  agentId: string | null;
+  agentName: string;
+  departmentId: string;
+  department: string;
+  teamName: string;
+  role: string;
+  identityStatus: "mapped" | "declared" | "system" | "unassigned";
+  identityConfidence: "configured" | "declared" | "direct" | "unsupported";
+  currentWork: string;
+  scope: string | null;
+  workRef: string | null;
 }
